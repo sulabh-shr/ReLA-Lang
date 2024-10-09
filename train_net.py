@@ -3,14 +3,14 @@ GRES Training Script.
 
 This script is a simplified version of the training script in detectron2/tools.
 """
+import warnings
+
 try:
     # ignore ShapelyDeprecationWarning from fvcore
     from shapely.errors import ShapelyDeprecationWarning
-    import warnings
     warnings.filterwarnings('ignore', category=ShapelyDeprecationWarning)
 except:
     pass
-
 import copy
 import itertools
 import logging
@@ -24,6 +24,7 @@ from typing import Any, Dict, List, Set
 
 import torch
 import torch.utils.data as torchdata
+warnings.filterwarnings("ignore", category=FutureWarning)
 
 import detectron2.utils.comm as comm
 from detectron2.checkpoint import DetectionCheckpointer
@@ -46,7 +47,8 @@ from gres_model import (
     RefCOCOMapper,
     ReferEvaluator,
     add_maskformer2_config,
-    add_refcoco_config
+    add_refcoco_config,
+    add_group_config
 )
 
 
@@ -183,6 +185,7 @@ def setup(args):
     add_deeplab_config(cfg)
     add_maskformer2_config(cfg)
     add_refcoco_config(cfg)
+    add_group_config(cfg)
     cfg.merge_from_file(args.config_file)
     cfg.merge_from_list(args.opts)
     cfg.freeze()

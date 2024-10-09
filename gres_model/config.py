@@ -127,3 +127,15 @@ def add_refcoco_config(cfg):
     cfg.REFERRING = CN()
     cfg.REFERRING.BERT_TYPE = "bert-base-uncased"
     cfg.REFERRING.MAX_TOKENS = 20
+
+
+def add_group_config(cfg):
+    """
+    Add config for RefCOCO.
+    """
+    cfg.MODEL.MASK_FORMER.GROUP_LAYERS = [2, 5, 8]
+    cfg.MODEL.MASK_FORMER.GROUP_TOKENS = [15, 10, 5]
+    cfg.MODEL.MASK_FORMER.GROUP_OUT_TOKENS = [4, 4, 4]
+    cfg.MODEL.MASK_FORMER.GROUP_NHEADS = [4, 4, 4]
+    cfg.MODEL.MASK_FORMER.GROUP_DEPTHS = [2, 2, 2]
+    cfg.MODEL.MASK_FORMER.GROUP_DROP_PATH_RATE = 0.1

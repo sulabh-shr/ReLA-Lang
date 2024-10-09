@@ -2,7 +2,7 @@ from . import data  # register all new datasets
 from . import modeling
 
 # config
-from .config import add_maskformer2_config, add_refcoco_config
+from .config import add_maskformer2_config, add_refcoco_config, add_group_config
 
 # dataset loading
 from .data.dataset_mappers.refcoco_mapper import RefCOCOMapper
