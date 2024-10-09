@@ -11,7 +11,6 @@ def refer_ce_loss(
         inputs: torch.Tensor,
         targets: torch.Tensor,
         weight: torch.Tensor):
-
     loss = F.cross_entropy(inputs, targets, weight=weight)
 
     return loss
@@ -20,6 +19,7 @@ def refer_ce_loss(
 refer_ce_loss_jit = torch.jit.script(
     refer_ce_loss
 )  # type: torch.jit.ScriptModule
+
 
 class ReferringCriterion(nn.Module):
     def __init__(self, weight_dict, losses):
@@ -35,20 +35,22 @@ class ReferringCriterion(nn.Module):
         return loss_map[loss](outputs, targets)
 
     def loss_masks_refer(self, outputs, targets):
-        src_masks = outputs["pred_masks"]
-        src_minimap = outputs["pred_logits"].permute(0,2,1)
-        src_nt_label = outputs["nt_label"]
+        src_masks = outputs["pred_masks"]  # (B, 2, H/4, W/4)
+        src_minimap = outputs["pred_logits"].permute(0, 2, 1)  # (B, 2, Q=P^2)
+        src_nt_label = outputs["nt_label"]  # (B, 2)
 
         masks = [t["gt_mask_merged"] for t in targets]
         target_masks, valid = nested_tensor_from_tensor_list(masks).decompose()
-        target_masks = target_masks.to(src_masks)
+        target_masks = target_masks.to(src_masks)  # (B, 1, H, W)
 
-        target_nts = torch.stack([t["empty"] for t in targets])
+        target_nts = torch.stack([t["empty"] for t in targets])  # (B,)
 
         h, w = target_masks.shape[-2:]
-        src_masks = F.interpolate(src_masks, (h, w), mode='bilinear', align_corners=False)
 
-        target_minimap = F.interpolate(target_masks, (10, 10), mode='bilinear', align_corners=False).flatten(start_dim=1)
+        src_masks = F.interpolate(src_masks, (h, w), mode='bilinear', align_corners=False)  # (B, 2, H, W)
+        # Number of queries set to 100 so, size = (10, 10)
+        target_minimap = F.interpolate(target_masks, (10, 10),
+                                       mode='bilinear', align_corners=False).flatten(start_dim=1)  # (B, 1, Q)
 
         weight = torch.FloatTensor([0.9, 1.1]).to(src_masks)
 
@@ -71,4 +73,3 @@ class ReferringCriterion(nn.Module):
         losses.update(self.loss_masks_refer(outputs, targets))
 
         return losses
-

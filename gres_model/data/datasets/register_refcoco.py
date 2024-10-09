@@ -6,6 +6,7 @@ from .grefcoco import load_grefcoco_json
 
 
 def register_refcoco(root):
+    root = os.path.join(root, "coco")
     image_root = os.path.join(root, "images", "train2014")
     dataset_info = [
         ('refcoco', 'unc', ['train', 'val', 'testA', 'testB']),
@@ -19,8 +20,8 @@ def register_refcoco(root):
             dataset_id = '_'.join([name, splitby, split])
             DatasetCatalog.register(
                 dataset_id,
-                lambda root=root, name=name, splitby=splitby, split=split, image_root=image_root: 
-                    load_refcoco_json(root, name, splitby, split, image_root)
+                lambda r=root, n=name, sb=splitby, s=split, i=image_root:
+                load_refcoco_json(r, n, sb, s, i)
             )
             MetadataCatalog.get(dataset_id).set(
                 evaluator_type="refer",
@@ -31,7 +32,9 @@ def register_refcoco(root):
                 image_root=image_root,
             )
 
+
 def register_grefcoco(root):
+    root = os.path.join(root, "coco")
     image_root = os.path.join(root, "images", "train2014")
     dataset_info = [
         ('grefcoco', 'unc', ['train', 'val', 'testA', 'testB']),
@@ -41,8 +44,8 @@ def register_grefcoco(root):
             dataset_id = '_'.join([name, splitby, split])
             DatasetCatalog.register(
                 dataset_id,
-                lambda root=root, name=name, splitby=splitby, split=split, image_root=image_root: 
-                    load_grefcoco_json(root, name, splitby, split, image_root)
+                lambda r=root, n=name, sb=splitby, s=split, i=image_root:
+                load_grefcoco_json(r, n, sb, s, i)
             )
             MetadataCatalog.get(dataset_id).set(
                 evaluator_type="refer",
@@ -55,6 +58,7 @@ def register_grefcoco(root):
 
 
 def merge_dataset(root, name_list, splitby, split, image_root):
+    root = os.path.join(root, "coco")
     dataset_dict = []
     for name in name_list:
         if name.startswith('grefcoco'):
@@ -65,6 +69,7 @@ def merge_dataset(root, name_list, splitby, split, image_root):
 
 
 def register_grefcoco_full(root):
+    root = os.path.join(root, "coco")
     image_root = os.path.join(root, "images", "train2014")
     dataset_info = [
         (('grefcoco', 'refcoco'), 'unc', ['train', 'val', 'testA']),
@@ -74,8 +79,8 @@ def register_grefcoco_full(root):
             dataset_id = '_'.join([name_list[0], splitby, split]) + '_full'
             DatasetCatalog.register(
                 dataset_id,
-                lambda root=root, name=name_list, splitby=splitby, split=split, image_root=image_root: 
-                    merge_dataset(root, name, splitby, split, image_root)
+                lambda r=root, n=name_list, sb=splitby, s=split, i=image_root:
+                merge_dataset(r, n, sb, s, i)
             )
             MetadataCatalog.get(dataset_id).set(
                 evaluator_type="refer",

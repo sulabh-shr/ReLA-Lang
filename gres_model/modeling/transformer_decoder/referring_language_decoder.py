@@ -125,11 +125,6 @@ class MultiScaleMaskedLangReferringDecoder(MultiScaleMaskedReferringDecoder):
 
         return ret
 
-
-
-
-
-
     def forward(
             self,
             x: List[torch.Tensor],
