@@ -1,1 +1,2 @@
 from .referring_transformer_decoder import MultiScaleMaskedReferringDecoder
+from .referring_language_decoder import MultiScaleMaskedLangReferringDecoder
