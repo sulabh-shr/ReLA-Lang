@@ -1,7 +1,8 @@
-_BASE_: gres_swin_base.yaml
+_BASE_: GRES_Paper_Swin.yaml
 MODEL:
   MASK_FORMER:
-    GROUP_LAYERS: [2, 5, 8]
+    TRANSFORMER_DECODER_NAME: "MultiScaleMaskedLangReferringDecoder"
+    GROUP_LAYERS: [2, 3, 4]
     GROUP_TOKENS: [15, 10, 5]
     GROUP_OUT_TOKENS: [15, 10, 5]
     GROUP_NHEADS: [4, 4, 4]
