@@ -126,6 +126,7 @@ def add_refcoco_config(cfg):
 
     cfg.REFERRING = CN()
     cfg.REFERRING.BERT_TYPE = "bert-base-uncased"
+    cfg.REFERRING.FREEZE_AT = 10
     cfg.REFERRING.MAX_TOKENS = 20
 
 

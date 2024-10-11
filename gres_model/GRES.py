@@ -78,6 +78,17 @@ class GRES(nn.Module):
         text_encoder = BertModel.from_pretrained(cfg.REFERRING.BERT_TYPE)
         text_encoder.pooler = None
 
+        # Freeze except last layers
+        freeze_at = cfg.REFERRING.get("FREEZE_AT", 0)
+        if freeze_at > 0:
+            print(f'Freezing BERT layers [0,{freeze_at})')
+            for name, param in text_encoder.named_parameters():
+                param.requires_grad = False
+                if 'encoder.layer' in name:
+                    encoder_layer_num = int(name.split('.')[2])
+                    if encoder_layer_num >= freeze_at:
+                        param.requires_grad = True
+
         # loss weights
         class_weight = cfg.MODEL.MASK_FORMER.CLASS_WEIGHT
         dice_weight = cfg.MODEL.MASK_FORMER.DICE_WEIGHT
