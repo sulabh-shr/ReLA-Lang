@@ -56,9 +56,14 @@ class MultiScaleMaskedLangReferringDecoder(MultiScaleMaskedReferringDecoder):
 
         self.RLA_lang_att = nn.ModuleList()
         self.LangGroupLayers = nn.ModuleList()
-        self.group_layers = group_layers = (2, 5, 8)
+        self.group_layers = group_layers
+
+        assert all([i < self.num_layers for i in self.group_layers]), \
+            f'Group layers: {self.group_layers} exceeds number of layers: {self.num_layers}'
+
         dpr = [x.item() for x in torch.linspace(0, group_drop_path_rate, sum(group_depths))]
         group_idx = 0
+
         for i_layer in range(self.num_layers):
             if i_layer in group_layers or i_layer == 0:
                 self.RLA_lang_att.append(
