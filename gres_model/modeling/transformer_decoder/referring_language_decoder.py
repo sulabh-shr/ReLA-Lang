@@ -216,7 +216,7 @@ class MultiScaleMaskedLangReferringDecoder(MultiScaleMaskedReferringDecoder):
 
             # Language Grouping before RLA
             if i in self.group_layers:
-                grouping_layer = self.LangGroupLayers[rla_idx]
+                grouping_layer = self.LangGroupLayers[group_idx]
                 lang_feat_att, prev_group_token, attn_dict = grouping_layer(
                     x=lang_feat_att,  # [B, N_l, C]
                     prev_group_token=prev_group_token,  # [B, S_1, C]
@@ -227,7 +227,7 @@ class MultiScaleMaskedLangReferringDecoder(MultiScaleMaskedReferringDecoder):
             # Region-Language Cross-Attention
             if i in self.rla_layers:
                 lang_vision_feat = (
-                        self.RLA_lang_att[0](
+                        self.RLA_lang_att[rla_idx](
                             prev_query_output,  # (Q, B, C)
                             lang_feat_att.permute(1, 0, 2)  # (N_l, B, C)
                         ) *
