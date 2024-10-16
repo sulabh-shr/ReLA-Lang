@@ -1,9 +1,9 @@
-_BASE_: GRES_Paper_Swin.yaml
+_BASE_: GRES_Repo_Swin.yaml
 MODEL:
   MASK_FORMER:
     TRANSFORMER_DECODER_NAME: "MultiScaleMaskedLangReferringDecoder"
-    RLA_LAYERS: [0, 2, 3, 4]
-    GROUP_LAYERS: [2, 3, 4]
+    RLA_LAYERS: [0, 2, 5, 8]
+    GROUP_LAYERS: [2, 5, 8]
     GROUP_TOKENS: [15, 10, 5]
     GROUP_OUT_TOKENS: [15, 10, 5]
     GROUP_NHEADS: [4, 4, 4]

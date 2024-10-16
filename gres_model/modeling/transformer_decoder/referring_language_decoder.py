@@ -31,6 +31,7 @@ class MultiScaleMaskedLangReferringDecoder(MultiScaleMaskedReferringDecoder):
             mask_dim: int,
             enforce_input_project: bool,
             rla_weight: float = 0.1,
+            rla_layers: List[int],
             group_layers: List[int],
             group_tokens: List[int],
             group_out_tokens: List[int],
@@ -54,6 +55,7 @@ class MultiScaleMaskedLangReferringDecoder(MultiScaleMaskedReferringDecoder):
             rla_weight=rla_weight
         )
 
+        self.rla_layers = rla_layers
         self.RLA_lang_att = nn.ModuleList()
         self.LangGroupLayers = nn.ModuleList()
         self.group_layers = group_layers
@@ -62,10 +64,10 @@ class MultiScaleMaskedLangReferringDecoder(MultiScaleMaskedReferringDecoder):
             f'Group layers: {self.group_layers} exceeds number of layers: {self.num_layers}'
 
         dpr = [x.item() for x in torch.linspace(0, group_drop_path_rate, sum(group_depths))]
-        group_idx = 0
 
+        group_idx = 0
         for i_layer in range(self.num_layers):
-            if i_layer in group_layers or i_layer == 0:
+            if i_layer in self.rla_layers:
                 self.RLA_lang_att.append(
                     CrossAttentionLayer(
                         d_model=hidden_dim,
@@ -74,7 +76,7 @@ class MultiScaleMaskedLangReferringDecoder(MultiScaleMaskedReferringDecoder):
                         normalize_before=pre_norm
                     )
                 )
-            if i_layer in group_layers:
+            if i_layer in self.group_layers:
                 downsample = GroupingBlock(
                     dim=hidden_dim,
                     out_dim=hidden_dim,
@@ -119,6 +121,9 @@ class MultiScaleMaskedLangReferringDecoder(MultiScaleMaskedReferringDecoder):
         ret["enforce_input_project"] = cfg.MODEL.MASK_FORMER.ENFORCE_INPUT_PROJ
 
         ret["mask_dim"] = cfg.MODEL.SEM_SEG_HEAD.MASK_DIM
+
+        # RLA layers
+        ret["rla_layers"] = cfg.MODEL.MASK_FORMER.RLA_LAYERS
 
         # Grouping Parameters
         ret["group_layers"] = cfg.MODEL.MASK_FORMER.GROUP_LAYERS
@@ -187,15 +192,15 @@ class MultiScaleMaskedLangReferringDecoder(MultiScaleMaskedReferringDecoder):
         predictions_class.append(outputs_minimap)
         # predictions_mask.append(outputs_mask)
 
+        # Project language dim (C_l) to vision dim (C)
+        lang_feat_att = lang_feat.permute(0, 2, 1)  # (B, N_l, C_l)
+        lang_feat_att = self.lang_proj(lang_feat_att)  # (B, N_l, C)
+
         # ReLA is applied multiple times for performance
-        group_idx = 0
+        group_idx = rla_idx = 0
         prev_group_token = None
-        lang_feat_att = None
         for i in range(self.num_layers):
             level_index = i % self.num_feature_levels
-            # print(f'Dec Layer: {i} | Ft: {level_index} | '
-            #       f'Q: {prev_query_output.shape} | K: {src[level_index].shape} | '
-            #       f'Q_embed: {query_embed.shape}')
             # Queries with all location masks skipped are inverted to attend to all locations
             all_masked_locations = torch.where(attn_mask.sum(-1) == attn_mask.shape[-1])
             attn_mask[all_masked_locations] = False  # (B*nHeads, Q, Hi * Wi)
@@ -209,41 +214,26 @@ class MultiScaleMaskedLangReferringDecoder(MultiScaleMaskedReferringDecoder):
                 query_pos=query_embed  # added to query/tgt
             )
 
-            # Project language to vision dimension before being used further
-            if lang_feat_att is None:
-                # Convert language dim (C_l) to vision dim (C)
-                lang_feat_att = lang_feat.permute(0, 2, 1)  # (B, N_l, C_l)
-                lang_feat_att = self.lang_proj(lang_feat_att)  # (B, N_l, C)
-                lang_vision_feat = (
-                        self.RLA_lang_att[0](  # Cross-Attention
-                            prev_query_output,  # (Q, B, C)
-                            lang_feat_att.permute(1, 0, 2)  # (N_l, B, C)
-                        ) *
-                        F.sigmoid(self.lang_weight)  # (1,)
-                )  # (Q, B, C)
-                prev_query_output = prev_query_output + lang_vision_feat * self.rla_weight  # (Q, B, C)
-
+            # Language Grouping before RLA
             if i in self.group_layers:
-                # Group Language tokens before using with vision tokens
-                grouping_layer = self.LangGroupLayers[group_idx]
+                grouping_layer = self.LangGroupLayers[rla_idx]
                 lang_feat_att, prev_group_token, attn_dict = grouping_layer(
                     x=lang_feat_att,  # [B, N_l, C]
                     prev_group_token=prev_group_token,  # [B, S_1, C]
                     return_attn=False
                 )
-                # If 0 not in grouping layers, there is an extra RLA layer along with 0 index
-                rla_idx = group_idx
-                if 0 not in self.group_layers:
-                    rla_idx = group_idx + 1
+                rla_idx += 1
+
+            # Region-Language Cross-Attention
+            if i in self.rla_layers:
                 lang_vision_feat = (
-                        self.RLA_lang_att[rla_idx](  # Cross-Attention
+                        self.RLA_lang_att[0](
                             prev_query_output,  # (Q, B, C)
                             lang_feat_att.permute(1, 0, 2)  # (N_l, B, C)
                         ) *
                         F.sigmoid(self.lang_weight)  # (1,)
                 )  # (Q, B, C)
                 prev_query_output = prev_query_output + lang_vision_feat * self.rla_weight  # (Q, B, C)
-
                 group_idx += 1
 
             # RLA vision attention

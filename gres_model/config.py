@@ -134,6 +134,7 @@ def add_group_config(cfg):
     """
     Add config for RefCOCO.
     """
+    cfg.MODEL.MASK_FORMER.RLA_LAYERS = [0, 2, 5, 8]
     cfg.MODEL.MASK_FORMER.GROUP_LAYERS = [2, 5, 8]
     cfg.MODEL.MASK_FORMER.GROUP_TOKENS = [15, 10, 5]
     cfg.MODEL.MASK_FORMER.GROUP_OUT_TOKENS = [4, 4, 4]
