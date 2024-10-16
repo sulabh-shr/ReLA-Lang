@@ -223,7 +223,7 @@ class MultiScaleMaskedLangReferringDecoder(MultiScaleMaskedReferringDecoder):
                     return_attn=False
                 )
                 group_idx += 1
-
+                
             # Region-Language Cross-Attention
             if i in self.rla_layers:
                 lang_vision_feat = (
