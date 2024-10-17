@@ -9,11 +9,11 @@ def register_refcoco(root):
     root = os.path.join(root, "coco")
     image_root = os.path.join(root, "images", "train2014")
     dataset_info = [
-        ('refcoco', 'unc', ['train', 'val', 'testA', 'testB']),
-        ('refcoco+', 'unc', ['train', 'val', 'testA', 'testB']),
-        ('refcocop', 'unc', ['train', 'val', 'testA', 'testB']),
-        ('refcocog', 'umd', ['train', 'val', 'test']),
-        ('refcocog', 'google', ['train', 'val'])
+        ('refcoco', 'unc', ['train', 'val', 'testA', 'testB', 'val_4']),
+        ('refcoco+', 'unc', ['train', 'val', 'testA', 'testB', 'val_4']),
+        ('refcocop', 'unc', ['train', 'val', 'testA', 'testB', 'val_4']),
+        ('refcocog', 'umd', ['train', 'val', 'test', 'val_4']),
+        ('refcocog', 'google', ['train', 'val', 'val_4'])
     ]
     for name, splitby, splits in dataset_info:
         for split in splits:
@@ -37,7 +37,7 @@ def register_grefcoco(root):
     root = os.path.join(root, "coco")
     image_root = os.path.join(root, "images", "train2014")
     dataset_info = [
-        ('grefcoco', 'unc', ['train', 'val', 'testA', 'testB']),
+        ('grefcoco', 'unc', ['train', 'val', 'testA', 'testB', 'val_4']),
     ]
     for name, splitby, splits in dataset_info:
         for split in splits:
@@ -72,7 +72,7 @@ def register_grefcoco_full(root):
     root = os.path.join(root, "coco")
     image_root = os.path.join(root, "images", "train2014")
     dataset_info = [
-        (('grefcoco', 'refcoco'), 'unc', ['train', 'val', 'testA']),
+        (('grefcoco', 'refcoco'), 'unc', ['train', 'val', 'testA', 'val_4']),
     ]
     for name_list, splitby, splits in dataset_info:
         for split in splits:

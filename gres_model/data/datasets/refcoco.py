@@ -16,14 +16,13 @@ from detectron2.utils.file_io import PathManager
 This file contains functions to parse RefCOCO-format annotations into dicts in "Detectron2 format".
 """
 
-
 logger = logging.getLogger(__name__)
 
 __all__ = ["load_refcoco_json"]
 
 
-def load_refcoco_json(refer_root, dataset_name, splitby, split, image_root, extra_annotation_keys=None, extra_refer_keys=None):
-
+def load_refcoco_json(refer_root, dataset_name, splitby, split, image_root,
+                      extra_annotation_keys=None, extra_refer_keys=None):
     if dataset_name == 'refcocop':
         dataset_name = 'refcoco+'
     if dataset_name == 'refcoco' or dataset_name == 'refcoco+':
@@ -34,25 +33,32 @@ def load_refcoco_json(refer_root, dataset_name, splitby, split, image_root, extr
     dataset_id = '_'.join([dataset_name, splitby, split])
 
     from .refer import REFER
-    logger.info('Loading dataset {} ({}-{}) ...'.format(dataset_name, splitby, split))
-    logger.info('Refcoco root: {}'.format(refer_root))
+    logger.info(f'Loading dataset {dataset_name} ({splitby}-{split}) ...')
+    logger.info(f'Refcoco root: {refer_root}')
     timer = Timer()
     refer_root = PathManager.get_local_path(refer_root)
     with contextlib.redirect_stdout(io.StringIO()):
         refer_api = REFER(data_root=refer_root,
-                        dataset=dataset_name,
-                        splitBy=splitby)
+                          dataset=dataset_name,
+                          splitBy=splitby)
     if timer.seconds() > 1:
-        logger.info("Loading {} takes {:.2f} seconds.".format(dataset_id, timer.seconds()))
+        logger.info(f"Loading {dataset_id} takes {timer.seconds():.2f} seconds.")
 
+    inc = 1
+    if split.startswith('val') and split != 'val':
+        inc = int(split.split('_')[1])
+        split = 'val'
     ref_ids = refer_api.getRefIds(split=split)
+    ref_ids = ref_ids[::inc]
     img_ids = refer_api.getImgIds(ref_ids)
     refs = refer_api.loadRefs(ref_ids)
     imgs = [refer_api.loadImgs(ref['image_id'])[0] for ref in refs]
     anns = [refer_api.loadAnns(ref['ann_id'])[0] for ref in refs]
     imgs_refs_anns = list(zip(imgs, refs, anns))
 
-    logger.info("Loaded {} images, {} referring objects in RefCOCO format from {}".format(len(img_ids), len(ref_ids), dataset_id))
+    logger.info(f"Loaded {len(img_ids)} images, "
+                f"{len(ref_ids)} referring objects in RefCOCO "
+                f"format from {dataset_id}")
 
     dataset_dicts = []
 
@@ -117,8 +123,8 @@ def load_refcoco_json(refer_root, dataset_name, splitby, split, image_root, extr
     # Debug mode
     # return dataset_dicts[:100]
 
-
     return dataset_dicts
+
 
 if __name__ == "__main__":
     """
@@ -144,7 +150,8 @@ if __name__ == "__main__":
 
     logger = setup_logger(name=__name__)
 
-    dicts = load_refcoco_json(REFCOCO_PATH, REFCOCO_DATASET, REFCOCO_SPLITBY, REFCOCO_SPLIT, COCO_TRAIN_2014_IMAGE_ROOT)
+    dicts = load_refcoco_json(REFCOCO_PATH, REFCOCO_DATASET, REFCOCO_SPLITBY,
+                              REFCOCO_SPLIT, COCO_TRAIN_2014_IMAGE_ROOT)
     logger.info("Done loading {} samples.".format(len(dicts)))
 
     dirname = "coco-data-vis"

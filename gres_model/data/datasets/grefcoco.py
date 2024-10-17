@@ -1,13 +1,9 @@
 import contextlib
 import io
 import logging
-import numpy as np
 import os
-import random
-import copy
 import pycocotools.mask as mask_util
 from fvcore.common.timer import Timer
-from PIL import Image
 
 from detectron2.structures import Boxes, BoxMode, PolygonMasks, RotatedBoxes
 from detectron2.utils.file_io import PathManager
@@ -16,18 +12,17 @@ from detectron2.utils.file_io import PathManager
 This file contains functions to parse RefCOCO-format annotations into dicts in "Detectron2 format".
 """
 
-
 logger = logging.getLogger(__name__)
 
-__all__ = ["load_refcoco_json"]
+__all__ = ["load_grefcoco_json"]
 
 
-def load_grefcoco_json(refer_root, dataset_name, splitby, split, image_root, extra_annotation_keys=None, extra_refer_keys=None):
-
+def load_grefcoco_json(refer_root, dataset_name, splitby, split, image_root,
+                       extra_annotation_keys=None, extra_refer_keys=None):
     if dataset_name == 'refcocop':
         dataset_name = 'refcoco+'
     if dataset_name == 'refcoco' or dataset_name == 'refcoco+':
-        splitby == 'unc'
+        assert splitby == 'unc'
     if dataset_name == 'refcocog':
         assert splitby == 'umd' or splitby == 'google'
 
@@ -40,19 +35,27 @@ def load_grefcoco_json(refer_root, dataset_name, splitby, split, image_root, ext
     refer_root = PathManager.get_local_path(refer_root)
     with contextlib.redirect_stdout(io.StringIO()):
         refer_api = G_REFER(data_root=refer_root,
-                        dataset=dataset_name,
-                        splitBy=splitby)
+                            dataset=dataset_name,
+                            splitBy=splitby)
     if timer.seconds() > 1:
         logger.info("Loading {} takes {:.2f} seconds.".format(dataset_id, timer.seconds()))
 
+    inc = 1
+    if split.startswith('val') and split != 'val':
+        inc = int(split.split('_')[1])
+        split = 'val'
+
     ref_ids = refer_api.getRefIds(split=split)
+    ref_ids = ref_ids[::inc]
     img_ids = refer_api.getImgIds(ref_ids)
     refs = refer_api.loadRefs(ref_ids)
     imgs = [refer_api.loadImgs(ref['image_id'])[0] for ref in refs]
     anns = [refer_api.loadAnns(ref['ann_id']) for ref in refs]
     imgs_refs_anns = list(zip(imgs, refs, anns))
 
-    logger.info("Loaded {} images, {} referring object sets in G_RefCOCO format from {}".format(len(img_ids), len(ref_ids), dataset_id))
+    logger.info(f"Loaded {len(img_ids)} images, "
+                f"{len(ref_ids)} referring object sets in G_RefCOCO format "
+                f"from {dataset_id}")
 
     dataset_dicts = []
 
@@ -106,7 +109,7 @@ def load_grefcoco_json(refer_root, dataset_name, splitby, split, image_root, ext
                     ann = {key: anno_dict[key] for key in ann_keys if key in anno_dict}
                     ann["bbox_mode"] = BoxMode.XYWH_ABS
                     ann["empty"] = False
- 
+
                     segm = anno_dict.get("segmentation", None)
                     assert segm  # either list[list[float]] or dict(RLE)
                     if isinstance(segm, dict):
@@ -146,6 +149,7 @@ def load_grefcoco_json(refer_root, dataset_name, splitby, split, image_root, ext
 
     return dataset_dicts
 
+
 if __name__ == "__main__":
     """
     Test the COCO json dataset loader.
@@ -157,18 +161,26 @@ if __name__ == "__main__":
         "dataset_name" can be "coco_2014_minival_100", or other
         pre-registered ones
     """
-    from detectron2.utils.logger import setup_logger
-    from detectron2.utils.visualizer import Visualizer
-    import detectron2.data.datasets  # noqa # add pre-defined metadata
-    import sys
+    import random
+    import matplotlib.pyplot as plt
 
-    REFCOCO_PATH = '/mnt/lustre/hhding/code/ReLA/datasets'
-    COCO_TRAIN_2014_IMAGE_ROOT = '/mnt/lustre/hhding/code/ReLA/datasets/images'
-    REFCOCO_DATASET = 'grefcoco'
-    REFCOCO_SPLITBY = 'unc'
-    REFCOCO_SPLIT = 'train'
+    from grefer import G_REFER
 
-    logger = setup_logger(name=__name__)
+    _root = os.environ['DETECTRON2_DATASETS']
+    _data_root = os.path.join(_root, 'coco')
+    _refer = G_REFER(data_root=_data_root, dataset='grefcoco', splitBy='unc')
+    _ref_ids = _refer.getRefIds(split='train')
+    print('There are %s training referred objects.' % len(_ref_ids))
 
-    dicts = load_grefcoco_json(REFCOCO_PATH, REFCOCO_DATASET, REFCOCO_SPLITBY, REFCOCO_SPLIT, COCO_TRAIN_2014_IMAGE_ROOT)
-    logger.info("Done loading {} samples.".format(len(dicts)))
+    random.shuffle(_ref_ids)
+    for _ref_id in _ref_ids:
+        print('-' * 15, f'Ref Id: {_ref_id}', '-' * 15)
+        ref = _refer.loadRefs(_ref_id)[0]
+        for cat_id in ref['category_id']:
+            if cat_id == -1:
+                print('The referent does not exist in the image')
+            else:
+                print('The label is %s.' % _refer.Cats[cat_id])
+        plt.figure()
+        _refer.showRef(ref, seg_box='seg')
+        plt.show()

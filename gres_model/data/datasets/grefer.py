@@ -31,6 +31,7 @@ from matplotlib.patches import Polygon, Rectangle
 import numpy as np
 from pycocotools import mask
 
+
 class G_REFER:
 
     def __init__(self, data_root, dataset='grefcoco', splitBy='unc'):
@@ -51,7 +52,7 @@ class G_REFER:
 
         ref_file = osp.join(self.DATA_DIR, f'grefs({splitBy}).p')
         if osp.exists(ref_file):
-            self.data['refs'] = pickle.load(open(ref_file, 'rb'),fix_imports=True)
+            self.data['refs'] = pickle.load(open(ref_file, 'rb'), fix_imports=True)
         else:
             ref_file = osp.join(self.DATA_DIR, f'grefs({splitBy}).json')
             if osp.exists(ref_file):
@@ -68,7 +69,7 @@ class G_REFER:
 
         # create index
         self.createIndex()
-        print('DONE (t=%.2fs)' % (time.time()-tic))
+        print('DONE (t=%.2fs)' % (time.time() - tic))
 
     @staticmethod
     def _toList(x):
@@ -132,7 +133,7 @@ class G_REFER:
                 if cat not in added_cats:
                     added_cats.append(cat)
                     catToRefs[cat] = catToRefs.get(cat, []) + [ref]
-            
+
             ann_id = self._toList(ann_id)
             refToAnn[ref_id] = [Anns[ann] for ann in ann_id]
             for ann_id_n in ann_id:
@@ -240,38 +241,42 @@ class G_REFER:
         ax.imshow(I)
         # show refer expression
         for sid, sent in enumerate(ref['sentences']):
-            print('%s. %s' % (sid+1, sent['sent']))
+            print('%s. %s' % (sid + 1, sent['sent']))
         # show segmentations
         if seg_box == 'seg':
-            ann_id = ref['ann_id']
-            ann = self.Anns[ann_id]
-            polygons = []
-            color = []
-            c = 'none'
-            if type(ann['segmentation'][0]) == list:
-                # polygon used for refcoco*
-                for seg in ann['segmentation']:
-                    poly = np.array(seg).reshape((len(seg)/2, 2))
-                    polygons.append(Polygon(poly, True, alpha=0.4))
-                    color.append(c)
-                p = PatchCollection(polygons, facecolors=color, edgecolors=(1,1,0,0), linewidths=3, alpha=1)
-                ax.add_collection(p)  # thick yellow polygon
-                p = PatchCollection(polygons, facecolors=color, edgecolors=(1,0,0,0), linewidths=1, alpha=1)
-                ax.add_collection(p)  # thin red polygon
-            else:
-                # mask used for refclef
-                rle = ann['segmentation']
-                m = mask.decode(rle)
-                img = np.ones( (m.shape[0], m.shape[1], 3) )
-                color_mask = np.array([2.0,166.0,101.0])/255
-                for i in range(3):
-                    img[:,:,i] = color_mask[i]
-                ax.imshow(np.dstack( (img, m*0.5) ))
+            ann_ids = ref['ann_id']
+            print(f'Total Anns: {len(ann_ids)}')
+            for ann_id in ann_ids:
+                ann = self.Anns[ann_id]
+                polygons = []
+                color = []
+                c = 'none'
+                if ann is None:
+                    continue
+                if type(ann['segmentation'][0]) == list:
+                    # polygon used for refcoco*
+                    for seg in ann['segmentation']:
+                        poly = np.array(seg).reshape((len(seg) // 2, 2))
+                        polygons.append(Polygon(poly, closed=True, alpha=0.4))
+                        color.append(c)
+                    p = PatchCollection(polygons, facecolors=color, edgecolors=(1, 1, 0, 0), linewidths=3, alpha=1)
+                    ax.add_collection(p)  # thick yellow polygon
+                    p = PatchCollection(polygons, facecolors=color, edgecolors=(1, 0, 0, 0), linewidths=1, alpha=1)
+                    ax.add_collection(p)  # thin red polygon
+                else:
+                    # mask used for refclef
+                    rle = ann['segmentation']
+                    m = mask.decode(rle)
+                    img = np.ones((m.shape[0], m.shape[1], 3))
+                    color_mask = np.array([2.0, 166.0, 101.0]) / 255
+                    for i in range(3):
+                        img[:, :, i] = color_mask[i]
+                    ax.imshow(np.dstack((img, m * 0.5)))
         # show bounding-box
         elif seg_box == 'box':
             ann_id = ref['ann_id']
             ann = self.Anns[ann_id]
-            bbox = 	self.getRefBox(ref['ref_id'])
+            bbox = self.getRefBox(ref['ref_id'])
             box_plot = Rectangle((bbox[0], bbox[1]), bbox[2], bbox[3], fill=False, edgecolor='green', linewidth=3)
             ax.add_patch(box_plot)
 
@@ -281,14 +286,14 @@ class G_REFER:
         if ann['iscrowd']:
             raise ValueError('Crowd object')
         image = self.Imgs[ann['image_id']]
-        if type(ann['segmentation'][0]) == list: # polygon
+        if type(ann['segmentation'][0]) == list:  # polygon
             rle = mask.frPyObjects(ann['segmentation'], image['height'], image['width'])
         else:
             rle = ann['segmentation']
 
         m = mask.decode(rle)
         m = np.sum(m, axis=2)  # sometimes there are multiple binary map (corresponding to multiple segs)
-        m = m.astype(np.uint8) # convert to np.uint8
+        m = m.astype(np.uint8)  # convert to np.uint8
         # compute area
         area = sum(mask.area(rle))  # should be close to ann['area']
         return {'mask': m, 'area': area}
@@ -305,20 +310,20 @@ class G_REFER:
         if ann_ids == [-1]:
             img = self.Imgs[self.Refs[ref_id]['image_id']]
             return {
-                'mask': np.zeros([img['height'], img['width']], dtype=np.uint8), 
+                'mask': np.zeros([img['height'], img['width']], dtype=np.uint8),
                 'empty': True
-                }
+            }
 
         anns = self.loadAnns(ann_ids)
         mask_list = [self.getMask(ann) for ann in anns if not ann['iscrowd']]
 
         if merge:
             merged_masks = sum([mask['mask'] for mask in mask_list])
-            merged_masks[np.where(merged_masks>1)] = 1
+            merged_masks[np.where(merged_masks > 1)] = 1
             return {
-                'mask': merged_masks, 
+                'mask': merged_masks,
                 'empty': False
-                }
+            }
         else:
             return mask_list
 

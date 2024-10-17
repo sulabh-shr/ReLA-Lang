@@ -21,7 +21,7 @@ showRef    - show image, segmentation or box of the referred object with the ref
 getMask    - get mask and area of the referred object given ref
 showMask   - show mask of the referred object given ref
 """
-
+import os
 import sys
 import os.path as osp
 import json
@@ -32,8 +32,7 @@ import skimage.io as io
 import matplotlib.pyplot as plt
 from matplotlib.collections import PatchCollection
 from matplotlib.patches import Polygon, Rectangle
-from pprint import pprint
-import numpy as np 
+import numpy as np
 from pycocotools import mask
 
 
@@ -49,7 +48,7 @@ class REFER:
         self.ROOT_DIR = osp.abspath(osp.dirname(__file__))
         self.DATA_DIR = osp.join(data_root, dataset)
         if dataset in ['refcoco', 'refcoco+', 'refcocog']:
-            self.IMAGE_DIR = osp.join(data_root, 'images/mscoco/images/train2014')
+            self.IMAGE_DIR = osp.join(data_root, 'images/train2014')
         elif dataset == 'refclef':
             self.IMAGE_DIR = osp.join(data_root, 'images/saiapr_tc-12')
         else:
@@ -250,8 +249,8 @@ class REFER:
             if type(ann['segmentation'][0]) == list:
                 # polygon used for refcoco*
                 for seg in ann['segmentation']:
-                    poly = np.array(seg).reshape((len(seg) / 2, 2))
-                    polygons.append(Polygon(poly, True, alpha=0.4))
+                    poly = np.array(seg).reshape((len(seg) // 2, 2))
+                    polygons.append(Polygon(poly, closed=True, alpha=0.4))
                     color.append(c)
                 p = PatchCollection(polygons, facecolors=color, edgecolors=(1, 1, 0, 0), linewidths=3, alpha=1)
                 ax.add_collection(p)  # thick yellow polygon
@@ -291,7 +290,6 @@ class REFER:
         area = sum(mask.area(rle))  # should be close to ann['area']
         return {'mask': m, 'area': area}
 
-
     def showMask(self, ref):
         M = self.getMask(ref)
         msk = M['mask']
@@ -300,18 +298,21 @@ class REFER:
 
 
 if __name__ == '__main__':
-    refer = REFER(dataset='refcocog', splitBy='google')
-    ref_ids = refer.getRefIds()
+    import random
 
-    ref_ids = refer.getRefIds(split='train')
-    print('There are %s training referred objects.' % len(ref_ids))
+    _root = os.environ['DETECTRON2_DATASETS']
+    _data_root = os.path.join(_root, 'coco')
+    _refer = REFER(data_root=_data_root, dataset='refcocog', splitBy='google')
+    _ref_ids = _refer.getRefIds(split='train')
+    print('There are %s training referred objects.' % len(_ref_ids))
 
-    for ref_id in ref_ids:
-        ref = refer.loadRefs(ref_id)[0]
-        if len(ref['sentences']) < 2:
+    random.shuffle(_ref_ids)
+    for _ref_id in _ref_ids:
+        print('-' * 15, f'Ref Id: {_ref_id}', '-' * 15)
+        _ref = _refer.loadRefs(_ref_id)[0]
+        if len(_ref['sentences']) < 2:
             continue
-        print('The label is %s.' % refer.Cats[ref['category_id']])
+        print('The label is %s.' % _refer.Cats[_ref['category_id']])
         plt.figure()
-        refer.showRef(ref, seg_box='box')
+        _refer.showRef(_ref, seg_box='seg')
         plt.show()
-
