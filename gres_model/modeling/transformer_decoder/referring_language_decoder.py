@@ -37,7 +37,9 @@ class MultiScaleMaskedLangReferringDecoder(MultiScaleMaskedReferringDecoder):
             group_out_tokens: List[int],
             group_nheads: List[int],
             group_depths: List[int],
-            group_drop_path_rate: int
+            group_drop_path_rate: int,
+            group_hard_assign: bool,
+            group_gumbel: bool
 
     ):
         super().__init__(
@@ -84,8 +86,8 @@ class MultiScaleMaskedLangReferringDecoder(MultiScaleMaskedReferringDecoder):
                     num_group_token=group_tokens[group_idx],
                     num_output_group=group_out_tokens[group_idx],
                     norm_layer=nn.LayerNorm,
-                    hard=True,
-                    gumbel=True)
+                    hard=group_hard_assign,
+                    gumbel=group_gumbel)
                 self.LangGroupLayers.append(
                     GroupingLayer(
                         dim=hidden_dim,
@@ -132,6 +134,8 @@ class MultiScaleMaskedLangReferringDecoder(MultiScaleMaskedReferringDecoder):
         ret["group_nheads"] = cfg.MODEL.MASK_FORMER.GROUP_NHEADS
         ret["group_depths"] = cfg.MODEL.MASK_FORMER.GROUP_DEPTHS
         ret["group_drop_path_rate"] = cfg.MODEL.MASK_FORMER.GROUP_DROP_PATH_RATE
+        ret["group_hard_assign"] = cfg.MODEL.MASK_FORMER.GROUP_HARD_ASSIGN
+        ret["group_gumbel"] = cfg.MODEL.MASK_FORMER.GROUP_GUMBEL
 
         return ret
 
@@ -169,6 +173,7 @@ class MultiScaleMaskedLangReferringDecoder(MultiScaleMaskedReferringDecoder):
         del mask
 
         for i in range(self.num_feature_levels):
+            print('layer', i, 'feat shape', x[i].shape)
             size_list.append(x[i].shape[-2:])
             pos.append(self.pe_layer(x[i], None).flatten(2))
             src.append(self.input_proj[i](x[i]).flatten(2) + self.level_embed.weight[i][None, :, None])
@@ -220,7 +225,7 @@ class MultiScaleMaskedLangReferringDecoder(MultiScaleMaskedReferringDecoder):
                 lang_feat_att, prev_group_token, attn_dict = grouping_layer(
                     x=lang_feat_att,  # [B, N_l, C]
                     prev_group_token=prev_group_token,  # [B, S_1, C]
-                    return_attn=False
+                    return_attn=False if self.training else True
                 )
                 group_idx += 1
                 
