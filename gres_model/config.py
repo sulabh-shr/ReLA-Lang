@@ -134,7 +134,10 @@ def add_group_config(cfg):
     """
     Add config for RefCOCO.
     """
+    # RLA layers
     cfg.MODEL.MASK_FORMER.RLA_LAYERS = [0, 2, 5, 8]
+
+    # Group layers
     cfg.MODEL.MASK_FORMER.GROUP_LAYERS = [2, 5, 8]
     cfg.MODEL.MASK_FORMER.GROUP_TOKENS = [15, 10, 5]
     cfg.MODEL.MASK_FORMER.GROUP_OUT_TOKENS = [4, 4, 4]
@@ -143,3 +146,6 @@ def add_group_config(cfg):
     cfg.MODEL.MASK_FORMER.GROUP_DROP_PATH_RATE = 0.1
     cfg.MODEL.MASK_FORMER.GROUP_HARD_ASSIGN = False
     cfg.MODEL.MASK_FORMER.GROUP_GUMBEL = False
+
+    # Criterion Weights
+    cfg.MODEL.MASK_FORMER.MINIMAP_WEIGHT = 0.1

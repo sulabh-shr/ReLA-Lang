@@ -39,7 +39,8 @@ class MultiScaleMaskedLangReferringDecoder(MultiScaleMaskedReferringDecoder):
             group_depths: List[int],
             group_drop_path_rate: int,
             group_hard_assign: bool,
-            group_gumbel: bool
+            group_gumbel: bool,
+            deep_supervision: bool
 
     ):
         super().__init__(
@@ -57,6 +58,8 @@ class MultiScaleMaskedLangReferringDecoder(MultiScaleMaskedReferringDecoder):
             rla_weight=rla_weight
         )
 
+        # Deep supervision similar to MaskFormer
+        self.deep_supervision = deep_supervision
         self.rla_layers = rla_layers
         self.RLA_lang_att = nn.ModuleList()
         self.LangGroupLayers = nn.ModuleList()
@@ -136,6 +139,7 @@ class MultiScaleMaskedLangReferringDecoder(MultiScaleMaskedReferringDecoder):
         ret["group_drop_path_rate"] = cfg.MODEL.MASK_FORMER.GROUP_DROP_PATH_RATE
         ret["group_hard_assign"] = cfg.MODEL.MASK_FORMER.GROUP_HARD_ASSIGN
         ret["group_gumbel"] = cfg.MODEL.MASK_FORMER.GROUP_GUMBEL
+        ret["deep_supervision"] = cfg.MODEL.MASK_FORMER.DEEP_SUPERVISION
 
         return ret
 
@@ -149,8 +153,10 @@ class MultiScaleMaskedLangReferringDecoder(MultiScaleMaskedReferringDecoder):
         """
 
         Args:
-            x: List of multiscale features
-            mask_features: Mask features of shape (B, C, H/4, W/4)
+            x: List of multiscale features in top-down order
+                i.e. [..., layer_n-1, layer_n] of shapes
+                [..., (B, C_conv, H/16, W/ 16), (B, C_conv, H/8, W/8)]
+            mask_features: Mask features of shape (B, C_mask, H/4, W/4)
             lang_feat: Language feature of shape (B, C_l, N_l)
             mask:
 
@@ -173,7 +179,6 @@ class MultiScaleMaskedLangReferringDecoder(MultiScaleMaskedReferringDecoder):
         del mask
 
         for i in range(self.num_feature_levels):
-            print('layer', i, 'feat shape', x[i].shape)
             size_list.append(x[i].shape[-2:])
             pos.append(self.pe_layer(x[i], None).flatten(2))
             src.append(self.input_proj[i](x[i]).flatten(2) + self.level_embed.weight[i][None, :, None])
@@ -184,12 +189,19 @@ class MultiScaleMaskedLangReferringDecoder(MultiScaleMaskedReferringDecoder):
 
         _, bs, _ = src[0].shape
 
-        # QxNxC
+        # Learned Positional Embedding
         query_embed = self.query_embed.weight.unsqueeze(1).repeat(1, bs, 1)  # (Q, B, C)
+        # Learned Queries
         prev_query_output = self.query_feat.weight.unsqueeze(1).repeat(1, bs, 1)  # (Q, B, C)
 
         predictions_class = []
         # predictions_mask = []
+
+        aux_tgt_mask = None
+        aux_nt_label = None
+        if self.deep_supervision:
+            aux_tgt_mask = []
+            aux_nt_label = []
 
         # prediction heads on learnable query features
         outputs_minimap, outputs_mask, attn_mask, tgt_mask, nt_label = self.forward_prediction_heads(
@@ -228,7 +240,7 @@ class MultiScaleMaskedLangReferringDecoder(MultiScaleMaskedReferringDecoder):
                     return_attn=False if self.training else True
                 )
                 group_idx += 1
-                
+
             # Region-Language Cross-Attention
             if i in self.rla_layers:
                 lang_vision_feat = (
@@ -263,10 +275,27 @@ class MultiScaleMaskedLangReferringDecoder(MultiScaleMaskedReferringDecoder):
             predictions_class.append(outputs_minimap)
             # predictions_mask.append(outputs_mask)
 
+            if self.deep_supervision:
+                aux_tgt_mask.append(tgt_mask)
+                aux_nt_label.append(nt_label)
+
         out = {
-            'pred_logits': predictions_class[-1],
-            'pred_masks': tgt_mask,
+            'pred_logits': predictions_class[-1],  # (B, Q, nC)
+            'pred_masks': tgt_mask,  # (B, nC, H/4, W/4)
             'all_masks': outputs_mask,  # Not used anywhere
             'nt_label': nt_label
         }
+
+        if self.deep_supervision:
+            aux_outputs = []
+            for i in range(self.num_layers):
+                layer_output = {
+                    'pred_logits': predictions_class[i + 1],  # skip first prediction
+                    'pred_masks': aux_tgt_mask[i],
+                    'nt_label': aux_nt_label[i],
+
+                }
+                aux_outputs.append(layer_output)
+            out['aux_outputs'] = aux_outputs
+
         return out
