@@ -16,11 +16,10 @@ from ..pixel_decoder.msdeformattn import build_pixel_decoder
 
 @SEM_SEG_HEADS_REGISTRY.register()
 class ReferringHead(nn.Module):
-
     _version = 2
 
     def _load_from_state_dict(
-        self, state_dict, prefix, local_metadata, strict, missing_keys, unexpected_keys, error_msgs
+            self, state_dict, prefix, local_metadata, strict, missing_keys, unexpected_keys, error_msgs
     ):
         version = local_metadata.get("version", None)
         if version is None or version < 2:
@@ -45,16 +44,16 @@ class ReferringHead(nn.Module):
 
     @configurable
     def __init__(
-        self,
-        input_shape: Dict[str, ShapeSpec],
-        *,
-        num_classes: int,
-        pixel_decoder: nn.Module,
-        loss_weight: float = 1.0,
-        ignore_value: int = -1,
-        # extra parameters
-        transformer_predictor: nn.Module,
-        transformer_in_feature: str,
+            self,
+            input_shape: Dict[str, ShapeSpec],
+            *,
+            num_classes: int,
+            pixel_decoder: nn.Module,
+            loss_weight: float = 1.0,
+            ignore_value: int = -1,
+            # extra parameters
+            transformer_predictor: nn.Module,
+            transformer_in_feature: str,
     ):
         """
         NOTE: this interface is experimental.
@@ -114,4 +113,6 @@ class ReferringHead(nn.Module):
         mask_features, _, multi_scale_features = self.pixel_decoder.forward_features(features)
         if self.transformer_in_feature == "multi_scale_pixel_decoder":
             predictions = self.predictor(multi_scale_features, mask_features, lang_feat, None)
+        else:
+            raise ValueError(f'Invalid transformer in feature: {self.transformer_in_feature}')
         return predictions
