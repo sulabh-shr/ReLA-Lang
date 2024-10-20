@@ -150,7 +150,7 @@ class ReferringCriterion(nn.Module):
                     if self.weight_dict[loss_name] != 0:
                         l_dict = self.get_loss(
                             loss=loss_name,
-                            outputs=outputs_without_aux,
+                            outputs=aux_outputs,
                             target_masks=target_masks,
                             target_nts=target_nts,
                             weight=weight
