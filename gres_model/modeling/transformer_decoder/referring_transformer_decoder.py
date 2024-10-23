@@ -319,6 +319,7 @@ class MultiScaleMaskedReferringDecoder(nn.Module):
             normalize_before=pre_norm,
         )
 
+        # TODO: Get the feature levels from config
         self.num_feature_levels = 3
         self.level_embed = nn.Embedding(self.num_feature_levels, hidden_dim)
         self.input_proj = nn.ModuleList()

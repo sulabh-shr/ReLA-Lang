@@ -1,0 +1,10 @@
+_BASE_: GRES_Repo_Swin.yaml
+MODEL:
+  MASK_FORMER:
+    TRANSFORMER_DECODER_NAME: "MultiScaleMaskedLangSimpleReferringDecoder"
+    RLA_LAYERS: [0, 2, 5, 8]
+    GROUP_LAYERS: [2, 5, 8]
+    GROUP_TOKENS: [15, 10, 5]
+    GROUP_NHEADS: [4, 4, 4]
+    GROUP_DEPTHS: [2, 2, 2]
+    GROUP_DROP_PATH_RATE: 0.1
