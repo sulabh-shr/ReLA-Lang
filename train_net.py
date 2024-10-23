@@ -8,6 +8,7 @@ import warnings
 try:
     # ignore ShapelyDeprecationWarning from fvcore
     from shapely.errors import ShapelyDeprecationWarning
+
     warnings.filterwarnings('ignore', category=ShapelyDeprecationWarning)
 except:
     pass
@@ -24,6 +25,7 @@ from typing import Any, Dict, List, Set
 
 import torch
 import torch.utils.data as torchdata
+
 warnings.filterwarnings("ignore", category=FutureWarning)
 
 import detectron2.utils.comm as comm
@@ -124,8 +126,8 @@ class Trainer(DefaultTrainer):
                 hyperparams = copy.copy(defaults)
 
                 if (
-                    "relative_position_bias_table" in module_param_name
-                    or "absolute_pos_embed" in module_param_name
+                        "relative_position_bias_table" in module_param_name
+                        or "absolute_pos_embed" in module_param_name
                 ):
                     hyperparams["weight_decay"] = 0.0
 
@@ -136,20 +138,26 @@ class Trainer(DefaultTrainer):
                     hyperparams["weight_decay"] = weight_decay_embed
                 params.append({"params": [value], **hyperparams})
 
+        # Add text encoder parameters
         hyperparams = copy.copy(defaults)
-        params.append({"params": reduce(operator.concat,
-                                        [[p for p in model.text_encoder.encoder.layer[i].parameters()
-                                          if p.requires_grad] for i in range(10)]), 
-                        **hyperparams
-                     })
+        params.append(
+            {
+                "params": reduce(
+                    operator.concat,
+                    [[p for p in model.text_encoder.encoder.layer[i].parameters()
+                      if p.requires_grad] for i in range(12)]
+                ),
+                **hyperparams
+            }
+        )
 
         def maybe_add_full_model_gradient_clipping(optim):
             # detectron2 doesn't have full model gradient clipping now
             clip_norm_val = cfg.SOLVER.CLIP_GRADIENTS.CLIP_VALUE
             enable = (
-                cfg.SOLVER.CLIP_GRADIENTS.ENABLED
-                and cfg.SOLVER.CLIP_GRADIENTS.CLIP_TYPE == "full_model"
-                and clip_norm_val > 0.0
+                    cfg.SOLVER.CLIP_GRADIENTS.ENABLED
+                    and cfg.SOLVER.CLIP_GRADIENTS.CLIP_TYPE == "full_model"
+                    and clip_norm_val > 0.0
             )
 
             class FullModelGradientClippingOptimizer(optim):
