@@ -103,8 +103,14 @@ class GRES(nn.Module):
         if deep_supervision:
             dec_layers = cfg.MODEL.MASK_FORMER.DEC_LAYERS
             aux_weight_dict = {}
-            for aux_idx in range(dec_layers - 1):
-                aux_weight_dict.update({f'{k}_{aux_idx}': v for k, v in weight_dict.items()})
+            aux_weight_multiplier = torch.linspace(0.1, 0.9, dec_layers - 2).tolist()
+            for aux_idx in range(dec_layers - 2):
+                aux_weight_dict.update(
+                    {
+                        f'{k}_{aux_idx}': v * aux_weight_multiplier[aux_idx]
+                        for k, v in weight_dict.items()
+                    }
+                )
             weight_dict.update(aux_weight_dict)
 
         criterion = ReferringCriterion(
