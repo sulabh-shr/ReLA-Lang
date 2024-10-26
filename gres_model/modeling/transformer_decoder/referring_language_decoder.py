@@ -12,6 +12,21 @@ from .referring_transformer_decoder import (
     CrossAttentionLayer
 )
 
+import numpy as np
+
+
+def get_sinusoidal_positional_embedding(length, dim):
+    # Initialize positional encoding matrix
+    position = torch.arange(length)[:, np.newaxis]  # Shape (L, 1)
+    div_term = torch.exp(torch.arange(0, dim, 2) * -(np.log(10000.0) / dim))
+
+    # Apply sine to even indices and cosine to odd indices
+    pe = torch.zeros(length, dim)
+    pe[:, 0::2] = torch.sin(position * div_term)  # Apply sine on even indices
+    pe[:, 1::2] = torch.cos(position * div_term)  # Apply cosine on odd indices
+
+    return pe
+
 
 @TRANSFORMER_DECODER_REGISTRY.register()
 class MultiScaleMaskedLangReferringDecoder(MultiScaleMaskedReferringDecoder):
@@ -40,7 +55,8 @@ class MultiScaleMaskedLangReferringDecoder(MultiScaleMaskedReferringDecoder):
             group_drop_path_rate: int,
             group_hard_assign: bool,
             group_gumbel: bool,
-            deep_supervision: bool
+            deep_supervision: bool,
+            lang_pos: bool
 
     ):
         super().__init__(
@@ -64,6 +80,11 @@ class MultiScaleMaskedLangReferringDecoder(MultiScaleMaskedReferringDecoder):
         self.RLA_lang_att = nn.ModuleList()
         self.LangGroupLayers = nn.ModuleList()
         self.group_layers = group_layers
+        self.lang_pos = None
+
+        if lang_pos:
+            self.lang_pos = nn.Embedding(20, hidden_dim)
+            self.lang_pos.weight = nn.Parameter(get_sinusoidal_positional_embedding(20, hidden_dim))
 
         assert all([i < self.num_layers for i in self.group_layers]), \
             f'Group layers: {self.group_layers} exceeds number of layers: {self.num_layers}'
@@ -140,6 +161,7 @@ class MultiScaleMaskedLangReferringDecoder(MultiScaleMaskedReferringDecoder):
         ret["group_hard_assign"] = cfg.MODEL.MASK_FORMER.GROUP_HARD_ASSIGN
         ret["group_gumbel"] = cfg.MODEL.MASK_FORMER.GROUP_GUMBEL
         ret["deep_supervision"] = cfg.MODEL.MASK_FORMER.DEEP_SUPERVISION
+        ret["lang_pos"] = cfg.MODEL.MASK_FORMER.LANG_POS
 
         return ret
 
@@ -196,6 +218,7 @@ class MultiScaleMaskedLangReferringDecoder(MultiScaleMaskedReferringDecoder):
 
         predictions_class = []
         # predictions_mask = []
+        attn_values = {}
 
         aux_tgt_mask = None
         aux_nt_label = None
@@ -213,14 +236,23 @@ class MultiScaleMaskedLangReferringDecoder(MultiScaleMaskedReferringDecoder):
         lang_feat_att = lang_feat.permute(0, 2, 1)  # (B, N_l, C_l)
         lang_feat_att = self.lang_proj(lang_feat_att)  # (B, N_l, C)
 
+        # Language positional embedding before grouping
+        if self.lang_pos is not None:
+            lang_pos = self.lang_pos.weight.unsqueeze(0).repeat(bs, 1, 1)
+            lang_feat_att = lang_feat_att + lang_pos
+
         # ReLA is applied multiple times for performance
         group_idx = rla_idx = 0
         prev_group_token = None
+
         for i in range(self.num_layers):
+
             level_index = i % self.num_feature_levels
+
             # Queries with all location masks skipped are inverted to attend to all locations
             all_masked_locations = torch.where(attn_mask.sum(-1) == attn_mask.shape[-1])
             attn_mask[all_masked_locations] = False  # (B*nHeads, Q, Hi * Wi)
+
             # cross-attention of regions and vision features
             prev_query_output = self.RIA_layers[i](
                 tgt=prev_query_output,  # query
@@ -237,8 +269,9 @@ class MultiScaleMaskedLangReferringDecoder(MultiScaleMaskedReferringDecoder):
                 lang_feat_att, prev_group_token, attn_dict = grouping_layer(
                     x=lang_feat_att,  # [B, N_l, C]
                     prev_group_token=prev_group_token,  # [B, S_1, C]
-                    return_attn=False if self.training else True
+                    return_attn=True
                 )
+                attn_values[i] = attn_dict
                 group_idx += 1
 
             # Region-Language Cross-Attention
@@ -283,7 +316,8 @@ class MultiScaleMaskedLangReferringDecoder(MultiScaleMaskedReferringDecoder):
             'pred_logits': predictions_class[-1],  # (B, Q, nC)
             'pred_masks': tgt_mask,  # (B, nC, H/4, W/4)
             'all_masks': outputs_mask,  # Not used anywhere
-            'nt_label': nt_label
+            'nt_label': nt_label,
+            'attn': attn_values
         }
 
         if self.deep_supervision:

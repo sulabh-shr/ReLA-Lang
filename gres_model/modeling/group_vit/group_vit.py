@@ -333,6 +333,7 @@ class AssignAttention(nn.Module):
             hard = self.hard
 
         attn_dim = -2
+
         if gumbel and self.training:
             attn = gumbel_softmax(attn, dim=attn_dim, hard=hard, tau=self.gumbel_tau)
         else:
@@ -361,6 +362,7 @@ class AssignAttention(nn.Module):
         raw_attn = (q @ k.transpose(-2, -1)) * self.scale
 
         attn = self.get_attn(raw_attn)
+
         if return_attn:
             hard_attn = attn.clone()
             soft_attn = self.get_attn(raw_attn, gumbel=False, hard=False)
@@ -373,11 +375,19 @@ class AssignAttention(nn.Module):
         attn = self.attn_drop(attn)
         assert attn.shape == (B, self.num_heads, N, S)
 
+        # Add attention values during training for attention loss
+        if self.training and return_attn:
+            if self.hard:
+                attn_dict['attn'] = gumbel_softmax(raw_attn, hard=False, dim=-2)
+            else:
+                attn_dict['attn'] = attn_dict['soft']
+
         # [B, nh, N, C//nh] <- [B, nh, N, S] @ [B, nh, S, C//nh]
         out = rearrange(attn @ v, 'b h n c -> b n (h c)', h=self.num_heads, b=B, n=N, c=C // self.num_heads)
 
         out = self.proj(out)
         out = self.proj_drop(out)
+
         return out, attn_dict
 
     def extra_repr(self):

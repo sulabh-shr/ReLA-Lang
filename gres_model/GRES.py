@@ -1,3 +1,4 @@
+import os.path
 from typing import Tuple
 
 import torch
@@ -95,6 +96,7 @@ class GRES(nn.Module):
             "loss_dice": cfg.MODEL.MASK_FORMER.DICE_WEIGHT,
             "loss_minimap": cfg.MODEL.MASK_FORMER.MINIMAP_WEIGHT,
             "loss_no_target": cfg.MODEL.MASK_FORMER.NO_OBJECT_WEIGHT,
+            "loss_attn": cfg.MODEL.MASK_FORMER.ATTN_LOSS_WEIGHT,
         }
         weight_dict = {k: v for k, v in weight_dict.items() if v != 0}
         losses = [k for k in weight_dict]
@@ -109,6 +111,7 @@ class GRES(nn.Module):
                     {
                         f'{k}_{aux_idx}': v * aux_weight_multiplier[aux_idx]
                         for k, v in weight_dict.items()
+                        if k != 'loss_attn'
                     }
                 )
             weight_dict.update(aux_weight_dict)

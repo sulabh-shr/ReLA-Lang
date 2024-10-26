@@ -43,16 +43,19 @@ class ReferringCriterion(nn.Module):
         self.losses = losses
 
     def get_loss(self, loss, outputs, target_masks, target_nts, weight):
+        """ Map of possible losses and function to calculate them. """
         loss_map = {
             "loss_mask": self.loss_masks,
             "loss_minimap": self.loss_minimap,
             "loss_no_target": self.loss_no_target,
-            "loss_dice": self.loss_dice
+            "loss_dice": self.loss_dice,
+            "loss_attn": self.loss_attn
         }
         assert loss in loss_map, f"do you really want to compute {loss} loss?"
         return loss_map[loss](outputs, target_masks, target_nts, weight)
 
     def loss_no_target(self, outputs, target_masks, target_nts, weight):
+        """ Loss for target vs no-target binary classification """
         src_nt_label = outputs["nt_label"]
         losses = {
             "loss_no_target": refer_ce_loss_jit(src_nt_label, target_nts, weight)
@@ -107,6 +110,29 @@ class ReferringCriterion(nn.Module):
         }
         return losses
 
+    def loss_attn(self, outputs, target_masks, target_nts, weight):
+        """ Attention regularization """
+
+        attn_per_stage = outputs['attn']
+        max_stage = max(attn_per_stage)
+        stage_weights = np.arange(max_stage + 1, 0, -1)
+        stage_weights = stage_weights / np.sum(stage_weights)
+
+        losses = {"loss_attn": 0}
+
+        for stage, stage_attn in attn_per_stage.items():
+            attn = stage_attn['attn']  # (B, 1, Go, Gi)
+            b, _, go, gi = attn.shape
+            group_base = gi / go
+            group_wt_sum = torch.sum(attn, dim=-1)
+            diff_from_base = group_base - group_wt_sum
+            group_loss = torch.mean(torch.pow(diff_from_base, 2))
+            losses["loss_attn"] += group_loss * stage_weights[stage]
+
+        losses["loss_attn"] = losses["loss_attn"] / len(attn_per_stage)
+
+        return losses
+
     def forward(self, outputs: Dict, targets: Dict) -> Dict[str, torch.Tensor]:
         """ Calculate all losses for main and/or auxiliary predictions.
 
@@ -116,6 +142,7 @@ class ReferringCriterion(nn.Module):
                 pred_logits: per-query flattened prediction of shape (B, Q, nC)
                 nt_label: no-target prediction of shape (B, 2)
                 aux_outputs: auxiliary outputs
+                attn: attention per grouping stage of shape (B, 1, Go, Gi)
             targets: Ground truth dict with keys:
                 gt_mask_merged: ground truth mask of shape (B, nC, H, W)
         Returns:
@@ -147,6 +174,8 @@ class ReferringCriterion(nn.Module):
         if 'aux_outputs' in outputs:
             for aux_idx, aux_outputs in enumerate(outputs['aux_outputs']):
                 for loss_name in self.losses:
+                    if loss_name == 'loss_attn':
+                        continue
                     if self.weight_dict[loss_name] != 0:
                         l_dict = self.get_loss(
                             loss=loss_name,
