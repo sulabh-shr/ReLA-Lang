@@ -134,8 +134,9 @@ class Trainer(DefaultTrainer):
                 if isinstance(module, norm_module_types):
                     hyperparams["weight_decay"] = weight_decay_norm
 
-                if isinstance(module, torch.nn.Embedding):
+                if isinstance(module, (torch.nn.Embedding, torch.nn.Parameter)):
                     hyperparams["weight_decay"] = weight_decay_embed
+
                 params.append({"params": [value], **hyperparams})
 
         # Add text encoder parameters
