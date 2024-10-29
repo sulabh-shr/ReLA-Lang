@@ -12,7 +12,7 @@ from ..utils.misc import nested_tensor_from_tensor_list, is_dist_avail_and_initi
 
 @torch.jit.script
 def ce_loss_jit(inputs: torch.Tensor, targets: torch.Tensor,
-                weight: torch.Tensor) -> torch.Tensor:
+                weight: torch.Tensor = None) -> torch.Tensor:
     """ Cross-entropy loss
 
     Args:
@@ -32,8 +32,8 @@ def dice_loss_jit(inputs: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
     """ Compute the DICE loss, similar to generalized IOU for masks
 
     Args:
-        inputs: prediction of shape (B, 2, *)
-        targets: ground truth of shape (B, *)
+        inputs: prediction of shape (B, 2, H, W)
+        targets: ground truth of shape (B, H, W)
                 (0 for the negative class and 1 for the positive class).
 
     Returns:
@@ -45,6 +45,32 @@ def dice_loss_jit(inputs: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
     numerator = 2 * (inputs * targets).sum(-1)
     denominator = inputs.sum(-1) + targets.sum(-1)
     loss = 1 - (numerator + 1) / (denominator + 1)
+    return loss.mean()
+
+
+@torch.jit.script
+def softmax_focal_loss(inputs, targets, alpha: float = 0.25, gamma: float = 2):
+    """ Focal loss for logits with 2 dimension.
+
+    Args:
+        inputs: predictions of shape (B, 2, *)
+        targets: targets of shape (B, *)
+        alpha: (optional) weighting factor in range (0,1) to balance
+        gamma: exponent of the modulating factor (1 - p_t) to
+               balance easy vs hard examples.
+
+    Returns:
+        Loss tensor
+    """
+    inputs = F.softmax(inputs, dim=1)
+
+    # Gather the probabilities of the true class for each pixel
+    # inputs: [N, C, H, W] -> [N, H, W]
+    probs = inputs.gather(1, targets.unsqueeze(1)).squeeze(1)
+
+    # Compute the focal loss based on the probability of the true class
+    loss = - alpha * (1 - probs) ** gamma * torch.log(probs + 1e-6)
+
     return loss.mean()
 
 
@@ -166,13 +192,23 @@ class ReferringCriterion(nn.Module):
         losses = {"loss_attn": 0}
 
         for stage, stage_attn in attn_per_stage.items():
-            attn = stage_attn['attn']  # (B, 1, Go, Gi)
+            attn: torch.Tensor = stage_attn['attn']  # (B, 1, Go, Gi)
             b, _, go, gi = attn.shape
-            group_base = gi / go
-            group_wt_sum = torch.sum(attn, dim=-1)
+
+            # max input assigned to each output group
+            group_base = gi / go * 1.5
+            group_wt_sum = torch.sum(attn, dim=-1)  # (B, 1, Go)
             diff_from_base = group_base - group_wt_sum
-            group_loss = torch.mean(torch.pow(diff_from_base, 2))
-            losses["loss_attn"] += group_loss * stage_weights[stage]
+            diff_from_base = torch.clamp(diff_from_base, min=0)
+            # group_loss = torch.mean(torch.pow(diff_from_base, 2))
+            group_loss = torch.mean(diff_from_base)
+
+            # entropy loss per input group
+            attn_non_zero = torch.clamp(attn, min=1e-12)
+            input_entropy = -torch.sum(attn * torch.log(attn_non_zero), dim=-2)  # (B, 1, Gi)
+            entropy_loss = torch.mean(input_entropy)
+
+            losses["loss_attn"] += (group_loss + entropy_loss) * stage_weights[stage]
 
         losses["loss_attn"] = losses["loss_attn"] / len(attn_per_stage)
 
@@ -211,7 +247,7 @@ class ReferringCriterion(nn.Module):
         target_minimap = target_minimap.squeeze(1).long()
 
         # Weight for no-target vs target class
-        weight = torch.FloatTensor([0.9, 1.1]).to(outputs["pred_masks"])
+        weight = torch.FloatTensor([1.0, 1.0]).to(outputs["pred_masks"])
 
         targets = {
             'target_masks': target_masks,  # (B, 1, H, W)
