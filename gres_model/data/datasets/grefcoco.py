@@ -129,13 +129,20 @@ def load_grefcoco_json(refer_root, dataset_name, splitby, split, image_root,
 
         record["annotations"] = obj
 
-        # Process referring expressions
+        # Add each sentence as separate data point for referring expressions
         sents = ref_dict['sentences']
         for sent in sents:
             ref_record = record.copy()
             ref = {key: sent[key] for key in ref_keys if key in sent}
             ref["ref_id"] = ref_dict["ref_id"]
             ref_record["sentence"] = ref
+
+            # Add number of masks of each type
+            if 'distractors' in ref_dict:
+                ref_record['referents'] = ref_dict['referents']
+                ref_record['distractors'] = ref_dict['distractors']
+                ref_record['non_distractors'] = ref_dict['non_distractors']
+
             dataset_dicts.append(ref_record)
     #         if ref_record['empty']:
     #             NT_count += 1
