@@ -1,0 +1,33 @@
+_BASE_: GRES_Repo_Swin.yaml
+MODEL:
+  MASK_FORMER:
+    TRANSFORMER_DECODER_NAME: "MultiScaleMaskedLangReferringDecoder"
+    RLA_LAYERS: [ 0, 2, 5, 8 ]
+    GROUP_LAYERS: [ 2, 5, 8 ]
+    GROUP_TOKENS: [ 15, 10, 5 ]
+    GROUP_OUT_TOKENS: [ 15, 10, 5 ]
+    GROUP_NHEADS: [ 4, 4, 4 ]
+    GROUP_DEPTHS: [ 2, 2, 2 ]
+    GROUP_DROP_PATH_RATE: 0.1
+    GROUP_HARD_ASSIGN: True
+    GROUP_GUMBEL: True
+    MASK_WEIGHT: 1.00
+    MINIMAP_WEIGHT: 0.10
+    DICE_WEIGHT: 0.10
+    NO_OBJECT_WEIGHT: 0.25
+    ATTN_LOSS_WEIGHT: 0.10
+    DISTRACTOR_WEIGHT: 0.50
+    LANG_POS: True
+    SIZE_DIVISIBILITY: 480
+INPUT:
+  IMAGE_SIZE: 480
+  MIN_SCALE: 0.90
+  MAX_SCALE: 1.0
+  FORMAT: "RGB"
+  DATASET_MAPPER_NAME: "refcocov2"
+  PAD_VALUE: 0
+  LABEL_PAD_VALUE: 255
+  USE_DISTRACTORS: True
+DATASETS:
+  TRAIN: ("grefcoco_gmu_train",)
+  TEST: ("grefcoco_gmu_val",)

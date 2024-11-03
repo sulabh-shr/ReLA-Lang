@@ -11,30 +11,41 @@ from ..utils.misc import nested_tensor_from_tensor_list, is_dist_avail_and_initi
 
 
 @torch.jit.script
-def ce_loss_jit(inputs: torch.Tensor, targets: torch.Tensor,
-                weight: torch.Tensor = None) -> torch.Tensor:
+def ce_loss_jit(
+        inputs: torch.Tensor,
+        targets: torch.Tensor,
+        weight: torch.Tensor = None,
+        ignore_index: int = 255
+) -> torch.Tensor:
     """ Cross-entropy loss
 
     Args:
         inputs: predictions of shape (B, nC, *)
         targets: targets of shape (B, *)
         weight: weights of shape (nC)
+        ignore_index: ignored class label
 
     Returns:
         loss: mean cross-entropy loss
     """
-    loss = F.cross_entropy(inputs, targets, weight=weight)
+    loss = F.cross_entropy(inputs, targets, weight=weight, ignore_index=ignore_index)
     return loss
 
 
 @torch.jit.script
-def dice_loss_jit(inputs: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
+def dice_loss_jit(
+        inputs: torch.Tensor,
+        targets: torch.Tensor,
+        ignore_index: int = -1
+) -> torch.Tensor:
     """ Compute the DICE loss, similar to generalized IOU for masks
 
     Args:
         inputs: prediction of shape (B, 2, H, W)
         targets: ground truth of shape (B, H, W)
-                (0 for the negative class and 1 for the positive class).
+                (0 for the negative class and 1 for the positive class)
+        ignore_index: ignored class label
+                -1 disables the ignoring (for scripting, None is not used)
 
     Returns:
         loss: mean dice loss
@@ -42,6 +53,10 @@ def dice_loss_jit(inputs: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
     inputs = F.softmax(inputs, dim=1)
     inputs = inputs[:, 1, :, :].flatten(1)  # take 1 for presence of class
     targets = targets.flatten(1)
+    if ignore_index != -1:
+        valid_points = targets != ignore_index
+        targets = targets[valid_points]
+        inputs = inputs[valid_points]
     numerator = 2 * (inputs * targets).sum(-1)
     denominator = inputs.sum(-1) + targets.sum(-1)
     loss = 1 - (numerator + 1) / (denominator + 1)
@@ -49,7 +64,12 @@ def dice_loss_jit(inputs: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
 
 
 @torch.jit.script
-def softmax_focal_loss(inputs, targets, alpha: float = 0.25, gamma: float = 2):
+def softmax_focal_loss(
+        inputs,
+        targets,
+        alpha: float = 0.25,
+        gamma: float = 2
+):
     """ Focal loss for logits with 2 dimension.
 
     Args:
@@ -62,6 +82,7 @@ def softmax_focal_loss(inputs, targets, alpha: float = 0.25, gamma: float = 2):
     Returns:
         Loss tensor
     """
+    # TODO: Use ignore_index
     inputs = F.softmax(inputs, dim=1)
 
     # Gather the probabilities of the true class for each pixel
@@ -75,10 +96,23 @@ def softmax_focal_loss(inputs, targets, alpha: float = 0.25, gamma: float = 2):
 
 
 class ReferringCriterion(nn.Module):
-    def __init__(self, weight_dict, losses):
+    def __init__(
+            self,
+            weight_dict: Dict[str, float],
+            losses: List[str],
+            ignore_index: int = None
+    ):
+        """
+
+        Args:
+            weight_dict: weight for each loss
+            losses: list of loss names
+            ignore_index: ignored class label
+        """
         super().__init__()
         self.weight_dict = weight_dict
         self.losses = losses
+        self.ignore_index = ignore_index
 
     @staticmethod
     def _get_query_side(queries: torch.Tensor) -> int:
@@ -103,7 +137,8 @@ class ReferringCriterion(nn.Module):
             "loss_minimap": self.loss_minimap,
             "loss_no_target": self.loss_no_target,
             "loss_dice": self.loss_dice,
-            "loss_attn": self.loss_attn
+            "loss_attn": self.loss_attn,
+            "loss_distractor": self.loss_distractor
         }
         assert loss in loss_map, f"do you really want to compute {loss} loss?"
         return loss_map[loss](outputs, targets)
@@ -114,7 +149,7 @@ class ReferringCriterion(nn.Module):
         target_nts = targets['target_nts']
         binary_weight = targets['weight']
         losses = {
-            "loss_no_target": ce_loss_jit(src_nt_label, target_nts, binary_weight)
+            "loss_no_target": ce_loss_jit(src_nt_label, target_nts, binary_weight, self.ignore_index)
         }
         return losses
 
@@ -130,13 +165,33 @@ class ReferringCriterion(nn.Module):
         binary_weight = targets['weight']
 
         losses = {
-            "loss_mask": ce_loss_jit(pred_masks, target_masks, binary_weight)
+            "loss_mask": ce_loss_jit(pred_masks, target_masks, binary_weight, self.ignore_index)
         }
 
         # Calculate dice loss only if it's coefficient is not 0
         if "loss_dice" in self.weight_dict and self.weight_dict["loss_dice"] != 0:
-            losses["loss_dice"] = dice_loss_jit(
-                pred_masks, target_masks)
+            losses["loss_dice"] = dice_loss_jit(pred_masks, target_masks, self.ignore_index)
+
+        return losses
+
+    def loss_distractor(self, outputs: Dict, targets: Dict):
+        """ Calculate cross-entropy loss for distractor pixels. """
+
+        target_masks = targets['target_distractor_masks_int']  # (B, H, W)
+        h, w = target_masks.shape[-2:]
+
+        pred_masks = outputs["pred_masks"]
+        pred_masks = F.interpolate(pred_masks, (h, w), mode='bilinear', align_corners=False)
+
+        binary_weight = targets['weight']
+
+        # Case when there is no distractor pixel in the batch
+        if torch.min(target_masks) == self.ignore_index:
+            loss_distractor = torch.sum(torch.Tensor([0.]).to(pred_masks))
+        else:
+            loss_distractor = ce_loss_jit(pred_masks, target_masks, binary_weight, self.ignore_index)
+
+        losses = {"loss_distractor": loss_distractor}
 
         return losses
 
@@ -155,7 +210,7 @@ class ReferringCriterion(nn.Module):
         pred_masks = F.interpolate(pred_masks, (h, w), mode='bilinear', align_corners=False)
 
         losses = {
-            "loss_dice": dice_loss_jit(pred_masks, target_masks)
+            "loss_dice": dice_loss_jit(pred_masks, target_masks, self.ignore_index)
         }
 
         return losses
@@ -172,11 +227,11 @@ class ReferringCriterion(nn.Module):
             q_side = self._get_query_side(pred_minimap)
             target_minimap = F.interpolate(
                 target_masks, (q_side, q_side),
-                mode='bilinear', align_corners=False).flatten(start_dim=1)  # (B, 1, Q)
+                mode='nearest').flatten(start_dim=1)  # (B, 1, Q)
             target_minimap = target_minimap.squeeze(1).long()  # (B, Q)
 
         losses = {
-            "loss_minimap": ce_loss_jit(pred_minimap, target_minimap, binary_weight)
+            "loss_minimap": ce_loss_jit(pred_minimap, target_minimap, binary_weight, self.ignore_index)
         }
 
         return losses
@@ -225,14 +280,14 @@ class ReferringCriterion(nn.Module):
                 aux_outputs: list of auxiliary outputs with same format as output
                 attn: attention per grouping stage of shape (B, 1, Go, Gi)
             targets: list of ground truth dict with keys:
-                gt_mask_merged: ground truth mask of shape (B, nC, H, W)
+                gt_mask_merged: ground truth mask of shape (nC, H, W)
                 empty: ground truth no-target label
         Returns:
             losses: dictionary of losses
         """
 
         # Pre-compute gt related info because all losses require it
-        masks = [t["gt_mask_merged"] for t in targets]
+        masks = [t["gt_mask_merged-resized"] for t in targets]
         target_masks, valid = nested_tensor_from_tensor_list(masks).decompose()
         target_masks = target_masks.to(outputs['pred_masks'])
         target_nts = torch.stack([t["empty"] for t in targets])
@@ -243,13 +298,13 @@ class ReferringCriterion(nn.Module):
         q_side = self._get_query_side(pred_minimap.permute(0, 2, 1))
         target_minimap = F.interpolate(
             target_masks, (q_side, q_side),
-            mode='bilinear', align_corners=False).flatten(start_dim=1)  # (B, 1, Q)
+            mode='nearest').flatten(start_dim=1)  # (B, 1, Q)
         target_minimap = target_minimap.squeeze(1).long()
 
         # Weight for no-target vs target class
         weight = torch.FloatTensor([1.0, 1.0]).to(outputs["pred_masks"])
 
-        targets = {
+        targets_dict = {
             'target_masks': target_masks,  # (B, 1, H, W)
             'target_masks_int': target_masks.squeeze(1).long(),  # (B, H, W)
             'target_nts': target_nts,  # (B,)
@@ -257,13 +312,20 @@ class ReferringCriterion(nn.Module):
             'weight': weight,
         }
 
+        # Pre-compute distractors
+        if "loss_distractor" in self.weight_dict:
+            distractor_masks = [t["distractors_merged-resized"] for t in targets]
+            distractor_masks, valid = nested_tensor_from_tensor_list(distractor_masks).decompose()
+            distractor_masks = distractor_masks.to(outputs['pred_masks'])
+            targets_dict['target_distractor_masks_int'] = distractor_masks.squeeze(1).long()
+
         losses = {}
 
         # Calculate losses for main prediction
         outputs_without_aux = {k: v for k, v in outputs.items() if k != "aux_outputs"}
         for loss_name in self.losses:
             if self.weight_dict[loss_name] != 0:
-                l_dict = self.get_loss(loss=loss_name, targets=targets,
+                l_dict = self.get_loss(loss=loss_name, targets=targets_dict,
                                        outputs=outputs_without_aux)
                 losses.update(l_dict)
 
@@ -275,7 +337,7 @@ class ReferringCriterion(nn.Module):
                     if loss_name == 'loss_attn':
                         continue
                     if self.weight_dict[loss_name] != 0:
-                        l_dict = self.get_loss(loss=loss_name, targets=targets,
+                        l_dict = self.get_loss(loss=loss_name, targets=targets_dict,
                                                outputs=aux_outputs)
                         l_dict = {f'{k}_{aux_idx}': v for k, v in l_dict.items()}
                         losses.update(l_dict)

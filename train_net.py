@@ -47,6 +47,7 @@ from detectron2.utils.logger import setup_logger
 # MaskFormer
 from gres_model import (
     RefCOCOMapper,
+    RefCOCOMapperV2,
     ReferEvaluator,
     add_maskformer2_config,
     add_refcoco_config,
@@ -67,20 +68,27 @@ class Trainer(DefaultTrainer):
                 dataset_name,
                 distributed=True,
                 output_dir=output_folder,
+                save_imgs=True
             )
         )
         return DatasetEvaluators(evaluator_list)
 
     @classmethod
     def build_train_loader(cls, cfg):
-        assert cfg.INPUT.DATASET_MAPPER_NAME == "refcoco"
-        mapper = RefCOCOMapper(cfg, True)
+        assert cfg.INPUT.DATASET_MAPPER_NAME in ("refcoco", "refcocov2")
+        if cfg.INPUT.DATASET_MAPPER_NAME == "refcoco":
+            mapper = RefCOCOMapper(cfg, True)
+        else:
+            mapper = RefCOCOMapperV2(cfg, True)
         return build_detection_train_loader(cfg, mapper=mapper)
 
     @classmethod
     def build_test_loader(cls, cfg, dataset_name):
-        assert cfg.INPUT.DATASET_MAPPER_NAME == "refcoco"
-        mapper = RefCOCOMapper(cfg, False)
+        assert cfg.INPUT.DATASET_MAPPER_NAME in ("refcoco", "refcocov2")
+        if cfg.INPUT.DATASET_MAPPER_NAME == "refcoco":
+            mapper = RefCOCOMapper(cfg, False)
+        else:
+            mapper = RefCOCOMapperV2(cfg, False)
         return build_detection_test_loader(cfg, dataset_name, mapper=mapper)
 
     @classmethod

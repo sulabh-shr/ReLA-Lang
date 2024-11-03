@@ -1,5 +1,5 @@
-import os.path
-from typing import Tuple
+import os
+from typing import Tuple, List, Dict
 
 import torch
 from torch import nn
@@ -12,10 +12,12 @@ from detectron2.data import MetadataCatalog
 from detectron2.modeling import META_ARCH_REGISTRY, build_backbone, build_sem_seg_head
 from detectron2.modeling.backbone import Backbone
 from detectron2.modeling.postprocessing import sem_seg_postprocess
-from detectron2.structures import ImageList, Instances, BitMasks
 from detectron2.utils.memory import retry_if_cuda_oom
 
 from .modeling.criterion import ReferringCriterion
+from .utils.misc import get_pad_values
+from .structures import ImageList
+from .modeling.postprocessing import refer_postprocess
 
 
 @META_ARCH_REGISTRY.register()
@@ -41,6 +43,8 @@ class GRES(nn.Module):
             instance_on: bool,
             test_topk_per_image: int,
             lang_backbone: nn.Module,
+            pad_value: int = 0,
+            label_pad_value: int = 255
     ):
 
         super().__init__()
@@ -60,6 +64,8 @@ class GRES(nn.Module):
         self.register_buffer("pixel_std", torch.Tensor(pixel_std).view(-1, 1, 1), False)
 
         # additional args
+        self.pad_value = pad_value
+        self.label_pad_value = label_pad_value
         self.semantic_on = semantic_on
         self.instance_on = instance_on
         self.panoptic_on = panoptic_on
@@ -97,9 +103,12 @@ class GRES(nn.Module):
             "loss_minimap": cfg.MODEL.MASK_FORMER.MINIMAP_WEIGHT,
             "loss_no_target": cfg.MODEL.MASK_FORMER.NO_OBJECT_WEIGHT,
             "loss_attn": cfg.MODEL.MASK_FORMER.ATTN_LOSS_WEIGHT,
+            "loss_distractor": cfg.MODEL.MASK_FORMER.DISTRACTOR_WEIGHT
         }
         weight_dict = {k: v for k, v in weight_dict.items() if v != 0}
         losses = [k for k in weight_dict]
+        if "loss_distractor" in weight_dict:
+            assert cfg.INPUT.USE_DISTRACTORS, f"Set INPUT.USE_DISTRACTORS to True for loss_distractor"
 
         deep_supervision = cfg.MODEL.MASK_FORMER.DEEP_SUPERVISION
         if deep_supervision:
@@ -119,6 +128,8 @@ class GRES(nn.Module):
         criterion = ReferringCriterion(
             weight_dict=weight_dict,
             losses=losses,
+            ignore_index=cfg.INPUT.LABEL_PAD_VALUE
+
         )
 
         return {
@@ -143,17 +154,19 @@ class GRES(nn.Module):
             "panoptic_on": cfg.MODEL.MASK_FORMER.TEST.PANOPTIC_ON,
             "test_topk_per_image": cfg.TEST.DETECTIONS_PER_IMAGE,
             "lang_backbone": text_encoder,
+            "pad_value": cfg.INPUT.PAD_VALUE,
+            "label_pad_value": cfg.INPUT.LABEL_PAD_VALUE
         }
 
     @property
     def device(self):
         return self.pixel_mean.device
 
-    def forward(self, batched_inputs):
+    def forward(self, batched_inputs: List):
 
         images = [x["image"].to(self.device) for x in batched_inputs]
         images = [(x - self.pixel_mean) / self.pixel_std for x in images]
-        images = ImageList.from_tensors(images, self.size_divisibility)
+        images = ImageList.from_tensors(images, self.size_divisibility, self.pad_value)
 
         lang_emb = [x['lang_tokens'].to(self.device) for x in batched_inputs]
         lang_emb = torch.cat(lang_emb, dim=0)
@@ -161,10 +174,10 @@ class GRES(nn.Module):
         lang_mask = [x['lang_mask'].to(self.device) for x in batched_inputs]
         lang_mask = torch.cat(lang_mask, dim=0)
 
-        lang_feat = self.text_encoder(lang_emb, attention_mask=lang_mask)[0]  # B, Nl, 768
+        lang_feat = self.text_encoder(lang_emb, attention_mask=lang_mask)[0]  # (B, Nl, 768)
 
-        lang_feat = lang_feat.permute(0, 2, 1)  # (B, 768, N_l) to make Conv1d happy
-        lang_mask = lang_mask.unsqueeze(dim=-1)  # (batch, N_l, 1)
+        lang_feat = lang_feat.permute(0, 2, 1)  # (B, 768, N_l)
+        lang_mask = lang_mask.unsqueeze(dim=-1)  # (B, 768, N_l, 1)
 
         features = self.backbone(images.tensor, lang_feat, lang_mask)
         outputs = self.sem_seg_head(features, lang_feat, lang_mask)
@@ -180,7 +193,6 @@ class GRES(nn.Module):
             return losses
         else:
             mask_pred_results = outputs["pred_masks"]
-            # upsample masks
             mask_pred_results = F.interpolate(
                 mask_pred_results,
                 size=(images.tensor.shape[-2], images.tensor.shape[-1]),
@@ -196,38 +208,63 @@ class GRES(nn.Module):
             for mask_pred_result, nt_pred_result, input_per_image, image_size in zip(
                     mask_pred_results, nt_pred_results, batched_inputs, images.image_sizes
             ):
+                height = input_per_image.get("height", image_size[0])
+                width = input_per_image.get("width", image_size[1])
                 processed_results.append({})
+
+                mask_pred_result = retry_if_cuda_oom(refer_postprocess)(
+                    mask_pred_result, image_size, height, width
+                )
+
                 r, nt = retry_if_cuda_oom(self.refer_inference)(mask_pred_result, nt_pred_result)
                 processed_results[-1]["ref_seg"] = r
                 processed_results[-1]["nt_label"] = nt
+                # processed_results[-1]["infer_img"] = input_per_image['image']
 
             return processed_results
 
-    def prepare_targets(self, batched_inputs, images):
-        h_pad, w_pad = images.tensor.shape[-2:]
+    def prepare_targets(self, batched_inputs: List, images: ImageList) -> List[Dict[str, torch.Tensor]]:
+        """
+
+        ImageList pads the input image tensor to be size_divisible.
+        Here, the ground truth masks are padded in the same way.
+
+        Args:
+            batched_inputs: original input list
+            images: padded image tensor
+
+        Returns:
+            new_targets: padded gt label masks
+        """
+
         new_targets = []
+        max_size = images.tensor.shape[-2:]
 
         for data_per_image in batched_inputs:
-            # pad instances
-            targets_per_image = data_per_image['instances'].to(self.device)
-            gt_masks = targets_per_image.gt_masks
-            padded_masks = torch.zeros((gt_masks.shape[0], h_pad, w_pad), dtype=gt_masks.dtype, device=gt_masks.device)
-            padded_masks[:, : gt_masks.shape[1], : gt_masks.shape[2]] = gt_masks
-            padded_masks = torch.zeros((gt_masks.shape[0], h_pad, w_pad), dtype=gt_masks.dtype, device=gt_masks.device)
-            is_empty = torch.tensor(data_per_image['empty'], dtype=targets_per_image.gt_classes.dtype
-                                    , device=targets_per_image.gt_classes.device)
+
+            targets_per_image = data_per_image['instances']
             target_dict = {
-                "labels": targets_per_image.gt_classes,
-                "masks": padded_masks,
-                "empty": is_empty,
+                "empty": torch.tensor(data_per_image['empty'],
+                                      dtype=targets_per_image.gt_classes.dtype,
+                                      device=self.device)
             }
-            if data_per_image["gt_mask_merged"] is not None:
-                target_dict["gt_mask_merged"] = data_per_image["gt_mask_merged"].to(self.device)
+
+            for key in ('gt_mask_merged', 'distractors_merged', 'non_distractors_merged'):
+                if key not in data_per_image:
+                    continue
+                mask = data_per_image[key]
+                mask_size = mask.shape  # (1, H, W)
+
+                left_p, right_p, top_p, bottom_p = get_pad_values(max_size, mask_size[1:])
+                padding_size = [left_p, right_p, top_p, bottom_p]
+                new_mask = F.pad(mask, padding_size, value=self.label_pad_value)
+                target_dict[f'{key}-resized'] = new_mask
 
             new_targets.append(target_dict)
+
         return new_targets
 
     def refer_inference(self, mask_pred, nt_pred):
-        mask_pred = mask_pred.sigmoid()
-        nt_pred = nt_pred.sigmoid()
+        mask_pred = mask_pred.softmax(dim=0)
+        nt_pred = nt_pred.softmax(dim=0)
         return mask_pred, nt_pred
