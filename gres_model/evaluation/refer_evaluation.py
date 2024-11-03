@@ -17,13 +17,14 @@ def computeIoU(pred_seg, gd_seg):
 
     return I, U
 
+
 class ReferEvaluator(DatasetEvaluator):
     def __init__(
-        self,
-        dataset_name,
-        distributed=True,
-        output_dir=None,
-        save_imgs=False,
+            self,
+            dataset_name,
+            distributed=True,
+            output_dir=None,
+            save_imgs=False,
     ):
         self._logger = logging.getLogger(__name__)
         self._dataset_name = dataset_name
@@ -41,7 +42,6 @@ class ReferEvaluator(DatasetEvaluator):
 
     def process(self, inputs, outputs):
         for input, output in zip(inputs, outputs):
-
             img_id = input['image_id']
             src = input['source']
             assert src in self._available_sources
@@ -60,12 +60,13 @@ class ReferEvaluator(DatasetEvaluator):
                 'img_id': img_id,
                 'source': src,
                 'sent': input['sentence']['raw'],
-                'sent_info':input['sentence'],
+                'sent_info': input['sentence'],
                 'pred_nt': pred_nt,
                 'gt_nt': input.get('empty', False),
-                'pred_mask': pred_mask, 
-                'gt_mask': gt
-                })
+                'pred_mask': pred_mask,
+                'gt_mask': gt,
+                # 'img': output['infer_img']
+            })
 
     def evaluate(self):
         if self._distributed:
@@ -77,13 +78,6 @@ class ReferEvaluator(DatasetEvaluator):
         else:
             predictions = self._predictions
 
-        if self._output_dir and self._save_imgs:
-            PathManager.mkdirs(self._output_dir)
-            file_path = os.path.join(self._output_dir, "ref_seg_predictions.pth")
-            self._logger.info(f'Saving output images to {file_path} ...')
-            with PathManager.open(file_path, "wb") as f:
-                torch.save(predictions, f)
-        
         pr_thres = [.7, .8, .9]
 
         accum_I = {}
@@ -183,7 +177,7 @@ class ReferEvaluator(DatasetEvaluator):
         detected_srcs = [src for src in self._available_sources if total_count[src] > 0]
 
         final_results_list = []
-        
+
         # results for each source
         for src in detected_srcs:
             res = {}
@@ -200,25 +194,30 @@ class ReferEvaluator(DatasetEvaluator):
             for thres in pr_thres:
                 pr_name = 'Pr@{0:1.1f}'.format(thres)
                 res[pr_name] = pr_count[src][thres] * 100. / not_empty_count[src]
-            
+
             final_results_list.append((src, res))
-        
+
         def _sum_values(x):
             return sum(x.values())
-        
+
         # global results
         if len(detected_srcs) > 1:
-            res_full = {}
-            res_full['gIoU'] = 100. * _sum_values(accum_IoU) / _sum_values(total_count)
-            res_full['cIoU'] =  100. * _sum_values(accum_I) / _sum_values(accum_U)
+            res_full = {
+                'gIoU': 100. * _sum_values(accum_IoU) / _sum_values(total_count),
+                'cIoU': 100. * _sum_values(accum_I) / _sum_values(accum_U)
+            }
 
             for thres in pr_thres:
                 pr_name = 'Pr@{0:1.1f}'.format(thres)
-                res_full[pr_name] = sum([pr_count[src][thres] for src in detected_srcs]) * 100. / _sum_values(not_empty_count)
+                res_full[pr_name] = sum([pr_count[src][thres] for src in detected_srcs]) * 100. / _sum_values(
+                    not_empty_count)
 
             final_results_list.append(('full', res_full))
-        
+
         if self._output_dir:
+
+            PathManager.mkdirs(self._output_dir)
+
             file_path = os.path.join(self._output_dir, f"{self._dataset_name}_results.json")
             with PathManager.open(file_path, "w") as f:
                 f.write(json.dumps(final_results_list, indent=4))
@@ -227,6 +226,18 @@ class ReferEvaluator(DatasetEvaluator):
             with PathManager.open(file_path, "w") as f:
                 f.write(json.dumps(results_dict, indent=4))
 
+            if self._save_imgs:
+                file_path = os.path.join(self._output_dir, "ref_seg_predictions.pth")
+                self._logger.info(f'Saving output images to {file_path} ...')
+                with PathManager.open(file_path, "wb") as f:
+                    # remove gt mask before saving
+                    for pred in predictions:
+                        del pred['gt_mask']
+                    torch.save(predictions, f)
+
         results = OrderedDict(final_results_list)
         self._logger.info(results)
+        
+        del predictions
+
         return results
