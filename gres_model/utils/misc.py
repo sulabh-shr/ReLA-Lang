@@ -109,3 +109,11 @@ def is_dist_avail_and_initialized():
     if not dist.is_initialized():
         return False
     return True
+
+
+def get_pad_values(max_size, image_size):
+    left_pad = (max_size[-1] - image_size[1]) // 2
+    right_pad = max_size[-1] - image_size[1] - left_pad
+    top_pad = (max_size[-2] - image_size[0]) // 2
+    bottom_pad = max_size[-2] - image_size[0] - top_pad
+    return left_pad, right_pad, top_pad, bottom_pad
