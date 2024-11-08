@@ -258,12 +258,17 @@ class ReferringCriterion(nn.Module):
             # group_loss = torch.mean(torch.pow(diff_from_base, 2))
             group_loss = torch.mean(diff_from_base)
 
+            # batch standard deviation
+            batch_base = 1 / go
+            batch_std = torch.std(attn, dim=0)  # (1, Go, Gi)
+            batch_loss = torch.clamp(batch_base - batch_std, min=0).sum() / b
+
             # entropy loss per input group
             attn_non_zero = torch.clamp(attn, min=1e-12)
             input_entropy = -torch.sum(attn * torch.log(attn_non_zero), dim=-2)  # (B, 1, Gi)
             entropy_loss = torch.mean(input_entropy)
 
-            losses["loss_attn"] += (group_loss + entropy_loss) * stage_weights[stage]
+            losses["loss_attn"] += (group_loss + entropy_loss + batch_loss) * stage_weights[stage]
 
         losses["loss_attn"] = losses["loss_attn"] / len(attn_per_stage)
 
