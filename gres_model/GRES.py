@@ -202,11 +202,13 @@ class GRES(nn.Module):
 
             nt_pred_results = outputs["nt_label"]
 
+            batch_attn = outputs.get('attn', None)
+
             del outputs
 
             processed_results = []
-            for mask_pred_result, nt_pred_result, input_per_image, image_size in zip(
-                    mask_pred_results, nt_pred_results, batched_inputs, images.image_sizes
+            for batch_idx, mask_pred_result, nt_pred_result, input_per_image, image_size in zip(
+                    range(len(batched_inputs)), mask_pred_results, nt_pred_results, batched_inputs, images.image_sizes
             ):
                 height = input_per_image.get("height", image_size[0])
                 width = input_per_image.get("width", image_size[1])
@@ -219,6 +221,13 @@ class GRES(nn.Module):
                 r, nt = retry_if_cuda_oom(self.refer_inference)(mask_pred_result, nt_pred_result)
                 processed_results[-1]["ref_seg"] = r
                 processed_results[-1]["nt_label"] = nt
+
+                if batch_attn is not None:
+                    for attn_type in ['soft', 'hard']:
+                        img_attn = {}
+                        for layer, layer_attn in batch_attn.items():
+                            img_attn[layer] = layer_attn[attn_type][batch_idx]
+                        processed_results[-1][f'{attn_type}_attn'] = img_attn
                 # processed_results[-1]["infer_img"] = input_per_image['image']
 
             return processed_results

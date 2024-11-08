@@ -56,7 +56,7 @@ class ReferEvaluator(DatasetEvaluator):
             output_nt = output["nt_label"].argmax(dim=0).bool().to(self._cpu_device)
             pred_nt = bool(output_nt)
 
-            self._predictions.append({
+            _pred = {
                 'img_id': img_id,
                 'source': src,
                 'sent': input['sentence']['raw'],
@@ -66,7 +66,15 @@ class ReferEvaluator(DatasetEvaluator):
                 'pred_mask': pred_mask,
                 'gt_mask': gt,
                 # 'img': output['infer_img']
-            })
+            }
+
+            if 'hard_attn' in output:
+                _pred['hard_attn'] = output['hard_attn']
+
+            if 'soft_attn' in output:
+                _pred['soft_attn'] = output['soft_attn']
+
+            self._predictions.append(_pred)
 
     def evaluate(self):
         if self._distributed:
@@ -237,7 +245,7 @@ class ReferEvaluator(DatasetEvaluator):
 
         results = OrderedDict(final_results_list)
         self._logger.info(results)
-        
+
         del predictions
 
         return results
