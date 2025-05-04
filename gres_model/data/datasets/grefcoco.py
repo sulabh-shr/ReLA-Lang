@@ -2,60 +2,79 @@ import contextlib
 import io
 import logging
 import os
-import pycocotools.mask as mask_util
-from fvcore.common.timer import Timer
 
+import pycocotools.mask as mask_util
 from detectron2.structures import Boxes, BoxMode, PolygonMasks, RotatedBoxes
 from detectron2.utils.file_io import PathManager
+from fvcore.common.timer import Timer
+from termcolor import colored
 
 """
 This file contains functions to parse RefCOCO-format annotations into dicts in "Detectron2 format".
 """
 
 logger = logging.getLogger(__name__)
+# Add stream handler to output to stdout
+if not logger.handlers:
+    stream_handler = logging.StreamHandler()
+    stream_handler.setFormatter(
+        logging.Formatter(
+            fmt=colored("[%(asctime)s %(name)s]: ", "green") + "%(message)s",
+            datefmt="%m/%d %H:%M:%S",
+        ),
+    )
+    logger.addHandler(stream_handler)
+    logger.setLevel(logging.INFO)
 
 __all__ = ["load_grefcoco_json"]
 
 
-def load_grefcoco_json(refer_root, dataset_name, splitby, split, image_root,
-                       extra_annotation_keys=None, extra_refer_keys=None):
-    if dataset_name == 'refcocop':
-        dataset_name = 'refcoco+'
-    if dataset_name == 'refcoco' or dataset_name == 'refcoco+':
-        assert splitby == 'unc'
-    if dataset_name == 'refcocog':
-        assert splitby == 'umd' or splitby == 'google'
+def load_grefcoco_json(
+    refer_root,
+    dataset_name,
+    splitby,
+    split,
+    image_root,
+    extra_annotation_keys=None,
+    extra_refer_keys=None,
+):
+    if dataset_name == "refcocop":
+        dataset_name = "refcoco+"
+    if dataset_name == "refcoco" or dataset_name == "refcoco+":
+        assert splitby == "unc"
+    if dataset_name == "refcocog":
+        assert splitby == "umd" or splitby == "google"
 
-    dataset_id = '_'.join([dataset_name, splitby, split])
+    dataset_id = "_".join([dataset_name, splitby, split])
 
     from .grefer import G_REFER
-    logger.info('Loading dataset {} ({}-{}) ...'.format(dataset_name, splitby, split))
-    logger.info('Refcoco root: {}'.format(refer_root))
+
+    logger.info("Loading dataset {} ({}-{}) ...".format(dataset_name, splitby, split))
+    logger.info("Refcoco root: {}".format(refer_root))
     timer = Timer()
     refer_root = PathManager.get_local_path(refer_root)
-    with contextlib.redirect_stdout(io.StringIO()):
-        refer_api = G_REFER(data_root=refer_root,
-                            dataset=dataset_name,
-                            splitBy=splitby)
+    refer_api = G_REFER(data_root=refer_root, dataset=dataset_name, splitBy=splitby)
     if timer.seconds() > 1:
         logger.info("Loading {} takes {:.2f} seconds.".format(dataset_id, timer.seconds()))
 
     inc = 1
-    if split.startswith('val') and split != 'val':
-        inc = int(split.split('_')[1])
-        split = 'val'
+    if split.startswith("val") and split != "val":
+        inc = int(split.split("_")[1])
+        split = "val"
 
     ref_ids = refer_api.getRefIds(split=split)
     ref_ids = ref_ids[::inc]
     img_ids = refer_api.getImgIds(ref_ids)
     refs = refer_api.loadRefs(ref_ids)
-    imgs = [refer_api.loadImgs(ref['image_id'])[0] for ref in refs]
-    anns = [refer_api.loadAnns(ref['ann_id']) for ref in refs]
+    imgs = [refer_api.loadImgs(ref["image_id"])[0] for ref in refs]
+    anns = [refer_api.loadAnns(ref["ann_id"]) for ref in refs]
     imgs_refs_anns = list(zip(imgs, refs, anns))
 
-    logger.info(f"Loaded {len(img_ids)} images, "
-                f"{len(ref_ids)} referring object sets in G_RefCOCO format "
-                f"from {dataset_id}")
+    logger.info(
+        f"Loaded {len(img_ids)} images, "
+        f"{len(ref_ids)} referring object sets in G_RefCOCO format "
+        f"from {dataset_id}"
+    )
 
     dataset_dicts = []
 
@@ -67,9 +86,9 @@ def load_grefcoco_json(refer_root, dataset_name, splitby, split, image_root,
     NT_count = 0
     MT_count = 0
 
-    for (img_dict, ref_dict, anno_dicts) in imgs_refs_anns:
+    for img_dict, ref_dict, anno_dicts in imgs_refs_anns:
         record = {}
-        record["source"] = 'grefcoco'
+        record["source"] = "grefcoco"
         record["file_name"] = os.path.join(image_root, img_dict["file_name"])
         record["height"] = img_dict["height"]
         record["width"] = img_dict["width"]
@@ -77,16 +96,16 @@ def load_grefcoco_json(refer_root, dataset_name, splitby, split, image_root,
 
         # Check that information of image, ann and ref match each other
         # This fails only when the data parsing logic or the annotation file is buggy.
-        assert ref_dict['image_id'] == image_id
-        assert ref_dict['split'] == split
-        if not isinstance(ref_dict['ann_id'], list):
-            ref_dict['ann_id'] = [ref_dict['ann_id']]
+        assert ref_dict["image_id"] == image_id
+        assert ref_dict["split"] == split
+        if not isinstance(ref_dict["ann_id"], list):
+            ref_dict["ann_id"] = [ref_dict["ann_id"]]
 
         # No target samples
         if None in anno_dicts:
             assert anno_dicts == [None]
-            assert ref_dict['ann_id'] == [-1]
-            record['empty'] = True
+            assert ref_dict["ann_id"] == [-1]
+            record["empty"] = True
             obj = {key: None for key in ann_keys if key in ann_keys}
             obj["bbox_mode"] = BoxMode.XYWH_ABS
             obj["empty"] = True
@@ -94,14 +113,14 @@ def load_grefcoco_json(refer_root, dataset_name, splitby, split, image_root,
 
         # Multi target samples
         else:
-            record['empty'] = False
+            record["empty"] = False
             obj = []
             for anno_dict in anno_dicts:
-                ann_id = anno_dict['id']
-                if anno_dict['iscrowd']:
+                ann_id = anno_dict["id"]
+                if anno_dict["iscrowd"]:
                     continue
                 assert anno_dict["image_id"] == image_id
-                assert ann_id in ref_dict['ann_id']
+                assert ann_id in ref_dict["ann_id"]
 
                 if ann_id in ann_lib:
                     ann = ann_lib[ann_id]
@@ -130,7 +149,7 @@ def load_grefcoco_json(refer_root, dataset_name, splitby, split, image_root,
         record["annotations"] = obj
 
         # Add each sentence as separate data point for referring expressions
-        sents = ref_dict['sentences']
+        sents = ref_dict["sentences"]
         for sent in sents:
             ref_record = record.copy()
             ref = {key: sent[key] for key in ref_keys if key in sent}
@@ -138,10 +157,10 @@ def load_grefcoco_json(refer_root, dataset_name, splitby, split, image_root,
             ref_record["sentence"] = ref
 
             # Add number of masks of each type
-            if 'distractors' in ref_dict:
-                ref_record['referents'] = ref_dict['referents']
-                ref_record['distractors'] = ref_dict['distractors']
-                ref_record['non_distractors'] = ref_dict['non_distractors']
+            if "distractors" in ref_dict:
+                ref_record["referents"] = ref_dict["referents"]
+                ref_record["distractors"] = ref_dict["distractors"]
+                ref_record["non_distractors"] = ref_dict["non_distractors"]
 
             dataset_dicts.append(ref_record)
     #         if ref_record['empty']:
@@ -169,25 +188,25 @@ if __name__ == "__main__":
         pre-registered ones
     """
     import random
-    import matplotlib.pyplot as plt
 
+    import matplotlib.pyplot as plt
     from grefer import G_REFER
 
-    _root = os.environ['DETECTRON2_DATASETS']
-    _data_root = os.path.join(_root, 'coco')
-    _refer = G_REFER(data_root=_data_root, dataset='grefcoco', splitBy='unc')
-    _ref_ids = _refer.getRefIds(split='train')
-    print('There are %s training referred objects.' % len(_ref_ids))
+    _root = os.environ["DETECTRON2_DATASETS"]
+    _data_root = os.path.join(_root, "coco")
+    _refer = G_REFER(data_root=_data_root, dataset="grefcoco", splitBy="unc")
+    _ref_ids = _refer.getRefIds(split="train")
+    print("There are %s training referred objects." % len(_ref_ids))
 
     random.shuffle(_ref_ids)
     for _ref_id in _ref_ids:
-        print('-' * 15, f'Ref Id: {_ref_id}', '-' * 15)
+        print("-" * 15, f"Ref Id: {_ref_id}", "-" * 15)
         ref = _refer.loadRefs(_ref_id)[0]
-        for cat_id in ref['category_id']:
+        for cat_id in ref["category_id"]:
             if cat_id == -1:
-                print('The referent does not exist in the image')
+                print("The referent does not exist in the image")
             else:
-                print('The label is %s.' % _refer.Cats[cat_id])
+                print("The label is %s." % _refer.Cats[cat_id])
         plt.figure()
-        _refer.showRef(ref, seg_box='seg')
+        _refer.showRef(ref, seg_box="seg")
         plt.show()
