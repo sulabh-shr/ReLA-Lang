@@ -148,17 +148,18 @@ class Trainer(DefaultTrainer):
                 params.append({"params": [value], **hyperparams})
 
         # Add text encoder parameters
-        hyperparams = copy.copy(defaults)
-        params.append(
-            {
-                "params": reduce(
-                    operator.concat,
-                    [[p for p in model.text_encoder.encoder.layer[i].parameters()
-                      if p.requires_grad] for i in range(12)]
-                ),
-                **hyperparams
-            }
-        )
+        if not isinstance(model.text_encoder, str):
+            hyperparams = copy.copy(defaults)
+            params.append(
+                {
+                    "params": reduce(
+                        operator.concat,
+                        [[p for p in model.text_encoder.encoder.layer[i].parameters()
+                        if p.requires_grad] for i in range(12)]
+                    ),
+                    **hyperparams
+                }
+            )
 
         def maybe_add_full_model_gradient_clipping(optim):
             # detectron2 doesn't have full model gradient clipping now

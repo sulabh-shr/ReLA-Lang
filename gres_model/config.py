@@ -129,6 +129,9 @@ def add_refcoco_config(cfg):
     cfg.REFERRING.FREEZE_AT = 10
     cfg.REFERRING.MAX_TOKENS = 20
 
+    # Language dimension
+    cfg.REFERRING.LANG_DIM = 768
+
 
 def add_group_config(cfg):
     """

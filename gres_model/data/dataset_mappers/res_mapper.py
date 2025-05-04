@@ -1,17 +1,19 @@
 import copy
 import logging
+import os
 from typing import Dict
 
-import torch
 import numpy as np
+import torch
+from pycocotools import mask as coco_mask
+from transformers import BertTokenizer, RobertaTokenizer
 
 from detectron2.config import configurable
 from detectron2.data import detection_utils as utils
 from detectron2.data import transforms as T
 from detectron2.structures import Instances, PolygonMasks
 
-from transformers import BertTokenizer
-from pycocotools import mask as coco_mask
+from gres_model.utils.tokens import get_tokenizer
 
 __all__ = ["RefCOCOMapperV2"]
 
@@ -63,32 +65,27 @@ def build_transform_test(cfg):
 class RefCOCOMapperV2:
     @configurable
     def __init__(
-            self,
-            is_train=True,
-            *,
-            tfm_gens,
-            image_format,
-            bert_type,
-            max_tokens,
-            merge=True,
-            label_pad_value=255,
-            use_distractors=False
+        self,
+        is_train=True,
+        *,
+        tfm_gens,
+        image_format,
+        bert_type,
+        max_tokens,
+        merge=True,
+        label_pad_value=255,
+        use_distractors=False,
     ):
         self.is_train = is_train
         self.merge = merge
         self.label_pad_value = label_pad_value
         self.use_distractors = use_distractors
         self.tfm_gens = tfm_gens
-        logging.getLogger(__name__).info(
-            "Full TransformGens used: {}".format(str(self.tfm_gens))
-        )
+        logging.getLogger(__name__).info("Full TransformGens used: {}".format(str(self.tfm_gens)))
 
         self.bert_type = bert_type
         self.max_tokens = max_tokens
-        logging.getLogger(__name__).info(
-            "Loading BERT tokenizer: {}...".format(self.bert_type)
-        )
-        self.tokenizer = BertTokenizer.from_pretrained(self.bert_type)
+        self.tokenizer = get_tokenizer(self.bert_type)
 
         self.img_format = image_format
 
@@ -107,7 +104,7 @@ class RefCOCOMapperV2:
             "bert_type": cfg.REFERRING.BERT_TYPE,
             "max_tokens": cfg.REFERRING.MAX_TOKENS,
             "label_pad_value": cfg.INPUT.LABEL_PAD_VALUE,
-            "use_distractors": cfg.INPUT.USE_DISTRACTORS
+            "use_distractors": cfg.INPUT.USE_DISTRACTORS,
         }
         return ret
 
@@ -116,7 +113,7 @@ class RefCOCOMapperV2:
         return x.sum(dim=0, keepdim=True).clamp(max=1)
 
     def __call__(self, dataset_dict: Dict) -> Dict:
-        """ Load and convert dataset_dict for model.
+        """Load and convert dataset_dict for model.
 
         If distractors and non_distractors exist in annotations, they are first
         transformed together with segment mask and separated later.
@@ -166,11 +163,11 @@ class RefCOCOMapperV2:
         empty = dataset_dict.get("empty", False)
 
         if len(instances) > 0:
-            assert (not empty)
+            assert not empty
             instances.gt_boxes = instances.gt_masks.get_bounding_boxes()
             # Generate masks from polygon
             h, w = instances.image_size
-            assert hasattr(instances, 'gt_masks')
+            assert hasattr(instances, "gt_masks")
             gt_masks = instances.gt_masks
             gt_masks = convert_coco_poly_to_mask(gt_masks, h, w)
             instances.gt_masks = gt_masks
@@ -181,9 +178,11 @@ class RefCOCOMapperV2:
                 num_distractors = dataset_dict.pop("distractors", 0)
                 num_non_distractors = dataset_dict.pop("non_distractors", 0)
                 if self.use_distractors:
-                    distractors = instances[num_gt:num_gt + num_distractors]
+                    distractors = instances[num_gt : num_gt + num_distractors]
                     distractors_masks = distractors.gt_masks
-                    non_distractors = instances[num_gt + num_distractors:num_gt + num_distractors + num_non_distractors]
+                    non_distractors = instances[
+                        num_gt + num_distractors : num_gt + num_distractors + num_non_distractors
+                    ]
                     non_distractors_masks = non_distractors.gt_masks
                 instances = instances[:num_gt]
                 gt_masks = gt_masks[:num_gt]
@@ -213,22 +212,32 @@ class RefCOCOMapperV2:
                 non_distractors_merged = torch.ones_like(non_distractors_masks) * self.label_pad_value
                 distractors_merged[distractors_masks == 1] = 0
                 non_distractors_merged[non_distractors_masks == 1] = 0
-                dataset_dict['distractors_merged'] = distractors_merged  # (1, H, W)
-                dataset_dict['non_distractors_merged'] = non_distractors_merged  # (1, H, W)
+                dataset_dict["distractors_merged"] = distractors_merged  # (1, H, W)
+                dataset_dict["non_distractors_merged"] = non_distractors_merged  # (1, H, W)
 
         # Language data
-        sentence_raw = dataset_dict['sentence']['raw']
+        sentence_raw = dataset_dict["sentence"]["raw"]
         attention_mask = [0] * self.max_tokens
-        padded_input_ids = [0] * self.max_tokens
 
-        input_ids = self.tokenizer.encode(text=sentence_raw, add_special_tokens=True)
+        # Get language model tokens and pad/truncate to max_tokens
+        if not isinstance(self.tokenizer, str):
+            padded_input_ids = [0] * self.max_tokens
 
-        input_ids = input_ids[:self.max_tokens]
-        padded_input_ids[:len(input_ids)] = input_ids
+            input_ids = self.tokenizer.encode(text=sentence_raw, add_special_tokens=True)
+            input_ids = input_ids[: self.max_tokens]
 
-        attention_mask[:len(input_ids)] = [1] * len(input_ids)
+            padded_input_ids[: len(input_ids)] = input_ids
+            dataset_dict["lang_tokens"] = torch.tensor(padded_input_ids).unsqueeze(0)
+        else:
+            # Saved tokens already have encoded embeddings
+            sentence_id = dataset_dict["sentence"]["sent_id"]
+            input_ids = torch.load(os.path.join(self.bert_type, f"{sentence_id}.pt"))["embeddings"]
+            input_ids = input_ids[: self.max_tokens]
+            padded_input_ids = torch.zeros(1, self.max_tokens, input_ids.shape[1])
+            padded_input_ids[0, : len(input_ids)] = input_ids
+            dataset_dict["lang_tokens"] = padded_input_ids
 
-        dataset_dict['lang_tokens'] = torch.tensor(padded_input_ids).unsqueeze(0)
-        dataset_dict['lang_mask'] = torch.tensor(attention_mask).unsqueeze(0)
+        attention_mask[: len(input_ids)] = [1] * len(input_ids)
+        dataset_dict["lang_mask"] = torch.tensor(attention_mask).unsqueeze(0)
 
         return dataset_dict

@@ -9,7 +9,7 @@ from ..group_vit import GroupingLayer, GroupingBlock
 from .referring_transformer_decoder import (
     TRANSFORMER_DECODER_REGISTRY,
     MultiScaleMaskedReferringDecoder,
-    CrossAttentionLayer
+    CrossAttentionLayer,
 )
 
 import numpy as np
@@ -32,32 +32,32 @@ def get_sinusoidal_positional_embedding(length, dim):
 class MultiScaleMaskedLangReferringDecoder(MultiScaleMaskedReferringDecoder):
     @configurable
     def __init__(
-            self,
-            in_channels,
-            mask_classification=True,
-            *,
-            num_classes: int,
-            hidden_dim: int,
-            num_queries: int,
-            nheads: int,
-            dim_feedforward: int,
-            dec_layers: int,
-            pre_norm: bool,
-            mask_dim: int,
-            enforce_input_project: bool,
-            rla_weight: float = 0.1,
-            rla_layers: List[int],
-            group_layers: List[int],
-            group_tokens: List[int],
-            group_out_tokens: List[int],
-            group_nheads: List[int],
-            group_depths: List[int],
-            group_drop_path_rate: int,
-            group_hard_assign: bool,
-            group_gumbel: bool,
-            deep_supervision: bool,
-            lang_pos: bool
-
+        self,
+        in_channels,
+        mask_classification=True,
+        *,
+        num_classes: int,
+        hidden_dim: int,
+        num_queries: int,
+        nheads: int,
+        dim_feedforward: int,
+        dec_layers: int,
+        pre_norm: bool,
+        mask_dim: int,
+        enforce_input_project: bool,
+        rla_weight: float = 0.1,
+        rla_layers: List[int],
+        group_layers: List[int],
+        group_tokens: List[int],
+        group_out_tokens: List[int],
+        group_nheads: List[int],
+        group_depths: List[int],
+        group_drop_path_rate: int,
+        group_hard_assign: bool,
+        group_gumbel: bool,
+        deep_supervision: bool,
+        lang_pos: bool,
+        lang_dim: int,
     ):
         super().__init__(
             in_channels=in_channels,
@@ -71,8 +71,11 @@ class MultiScaleMaskedLangReferringDecoder(MultiScaleMaskedReferringDecoder):
             pre_norm=pre_norm,
             mask_dim=mask_dim,
             enforce_input_project=enforce_input_project,
-            rla_weight=rla_weight
+            rla_weight=rla_weight,
         )
+
+        if lang_dim != 768:
+            self.lang_proj = nn.Linear(lang_dim, hidden_dim)
 
         # Deep supervision similar to MaskFormer
         self.deep_supervision = deep_supervision
@@ -86,8 +89,9 @@ class MultiScaleMaskedLangReferringDecoder(MultiScaleMaskedReferringDecoder):
             self.lang_pos = nn.Embedding(20, hidden_dim)
             self.lang_pos.weight = nn.Parameter(get_sinusoidal_positional_embedding(20, hidden_dim))
 
-        assert all([i < self.num_layers for i in self.group_layers]), \
-            f'Group layers: {self.group_layers} exceeds number of layers: {self.num_layers}'
+        assert all(
+            [i < self.num_layers for i in self.group_layers]
+        ), f"Group layers: {self.group_layers} exceeds number of layers: {self.num_layers}"
 
         dpr = [x.item() for x in torch.linspace(0, group_drop_path_rate, sum(group_depths))]
 
@@ -95,12 +99,7 @@ class MultiScaleMaskedLangReferringDecoder(MultiScaleMaskedReferringDecoder):
         for i_layer in range(self.num_layers):
             if i_layer in self.rla_layers:
                 self.RLA_lang_att.append(
-                    CrossAttentionLayer(
-                        d_model=hidden_dim,
-                        nhead=nheads,
-                        dropout=0.0,
-                        normalize_before=pre_norm
-                    )
+                    CrossAttentionLayer(d_model=hidden_dim, nhead=nheads, dropout=0.0, normalize_before=pre_norm)
                 )
             if i_layer in self.group_layers:
                 downsample = GroupingBlock(
@@ -111,7 +110,8 @@ class MultiScaleMaskedLangReferringDecoder(MultiScaleMaskedReferringDecoder):
                     num_output_group=group_out_tokens[group_idx],
                     norm_layer=nn.LayerNorm,
                     hard=group_hard_assign,
-                    gumbel=group_gumbel)
+                    gumbel=group_gumbel,
+                )
                 self.LangGroupLayers.append(
                     GroupingLayer(
                         dim=hidden_dim,
@@ -119,13 +119,13 @@ class MultiScaleMaskedLangReferringDecoder(MultiScaleMaskedReferringDecoder):
                         depth=group_depths[group_idx],
                         num_heads=group_nheads[group_idx],
                         num_group_token=group_tokens[group_idx],
-                        mlp_ratio=4.,
-                        drop_path=dpr[sum(group_depths[:group_idx]):sum(group_depths[:group_idx + 1])],
+                        mlp_ratio=4.0,
+                        drop_path=dpr[sum(group_depths[:group_idx]) : sum(group_depths[: group_idx + 1])],
                         norm_layer=nn.LayerNorm,
                         downsample=downsample,
                         use_checkpoint=False,
                         group_projector=None,
-                        zero_init_group_token=False
+                        zero_init_group_token=False,
                     )
                 )
                 group_idx += 1
@@ -162,16 +162,11 @@ class MultiScaleMaskedLangReferringDecoder(MultiScaleMaskedReferringDecoder):
         ret["group_gumbel"] = cfg.MODEL.MASK_FORMER.GROUP_GUMBEL
         ret["deep_supervision"] = cfg.MODEL.MASK_FORMER.DEEP_SUPERVISION
         ret["lang_pos"] = cfg.MODEL.MASK_FORMER.LANG_POS
+        ret["lang_dim"] = cfg.REFERRING.LANG_DIM
 
         return ret
 
-    def forward(
-            self,
-            x: List[torch.Tensor],
-            mask_features: torch.Tensor,
-            lang_feat: torch.Tensor,
-            mask=None
-    ):
+    def forward(self, x: List[torch.Tensor], mask_features: torch.Tensor, lang_feat: torch.Tensor, mask=None):
         """
 
         Args:
@@ -228,7 +223,8 @@ class MultiScaleMaskedLangReferringDecoder(MultiScaleMaskedReferringDecoder):
 
         # prediction heads on learnable query features
         outputs_minimap, outputs_mask, attn_mask, tgt_mask, nt_label = self.forward_prediction_heads(
-            prev_query_output, mask_features, attn_mask_target_size=size_list[0])
+            prev_query_output, mask_features, attn_mask_target_size=size_list[0]
+        )
         predictions_class.append(outputs_minimap)
         # predictions_mask.append(outputs_mask)
 
@@ -260,49 +256,40 @@ class MultiScaleMaskedLangReferringDecoder(MultiScaleMaskedReferringDecoder):
                 memory_mask=attn_mask,  # attn_mask
                 memory_key_padding_mask=None,
                 pos=pos[level_index],  # added to key/memory
-                query_pos=query_embed  # added to query/tgt
+                query_pos=query_embed,  # added to query/tgt
             )
 
             # Language Grouping before RLA
             if i in self.group_layers:
                 grouping_layer = self.LangGroupLayers[group_idx]
                 lang_feat_att, prev_group_token, attn_dict = grouping_layer(
-                    x=lang_feat_att,  # [B, N_l, C]
-                    prev_group_token=prev_group_token,  # [B, S_1, C]
-                    return_attn=True
+                    x=lang_feat_att, prev_group_token=prev_group_token, return_attn=True  # [B, N_l, C]  # [B, S_1, C]
                 )
                 attn_values[i] = attn_dict
                 group_idx += 1
 
             # Region-Language Cross-Attention
             if i in self.rla_layers:
-                lang_vision_feat = (
-                        self.RLA_lang_att[rla_idx](
-                            prev_query_output,  # (Q, B, C)
-                            lang_feat_att.permute(1, 0, 2)  # (N_l, B, C)
-                        ) *
-                        F.sigmoid(self.lang_weight)  # (1,)
-                )  # (Q, B, C)
+                lang_vision_feat = self.RLA_lang_att[rla_idx](
+                    prev_query_output, lang_feat_att.permute(1, 0, 2)  # (Q, B, C)  # (N_l, B, C)
+                ) * F.sigmoid(
+                    self.lang_weight
+                )  # (1,)  # (Q, B, C)
                 prev_query_output = prev_query_output + lang_vision_feat * self.rla_weight  # (Q, B, C)
                 rla_idx += 1
 
             # RLA vision attention
             # self attention itself has a skip connection
             prev_query_output = self.RLA_vision[i](  # Self-Attention
-                prev_query_output,
-                tgt_mask=None,
-                tgt_key_padding_mask=None,
-                query_pos=query_embed
+                prev_query_output, tgt_mask=None, tgt_key_padding_mask=None, query_pos=query_embed
             )
 
             # Postprocessing
             prev_query_output = self.transformer_ffn_layers[i](prev_query_output)
 
-            outputs_minimap, outputs_mask, attn_mask, tgt_mask, nt_label = (
-                self.forward_prediction_heads(
-                    prev_query_output,
-                    mask_features,
-                    attn_mask_target_size=size_list[(i + 1) % self.num_feature_levels]))
+            outputs_minimap, outputs_mask, attn_mask, tgt_mask, nt_label = self.forward_prediction_heads(
+                prev_query_output, mask_features, attn_mask_target_size=size_list[(i + 1) % self.num_feature_levels]
+            )
 
             # Predictions of all passes are recorded, but only the last output is used in this code
             predictions_class.append(outputs_minimap)
@@ -313,24 +300,23 @@ class MultiScaleMaskedLangReferringDecoder(MultiScaleMaskedReferringDecoder):
                 aux_nt_label.append(nt_label)
 
         out = {
-            'pred_logits': predictions_class[-1],  # (B, Q, nC)
-            'pred_masks': tgt_mask,  # (B, nC, H/4, W/4)
-            'all_masks': outputs_mask,  # Not used anywhere
-            'nt_label': nt_label,
-            'attn': attn_values
+            "pred_logits": predictions_class[-1],  # (B, Q, nC)
+            "pred_masks": tgt_mask,  # (B, nC, H/4, W/4)
+            "all_masks": outputs_mask,  # Not used anywhere
+            "nt_label": nt_label,
+            "attn": attn_values,
         }
 
         if self.deep_supervision:
             aux_outputs = []
             for i in range(self.num_layers - 1):
                 layer_output = {
-                    'pred_logits': predictions_class[i + 1],  # skip first prediction
-                    'pred_masks': aux_tgt_mask[i],
-                    'nt_label': aux_nt_label[i],
-
+                    "pred_logits": predictions_class[i + 1],  # skip first prediction
+                    "pred_masks": aux_tgt_mask[i],
+                    "nt_label": aux_nt_label[i],
                 }
                 aux_outputs.append(layer_output)
-            out['aux_outputs'] = aux_outputs
+            out["aux_outputs"] = aux_outputs
 
         return out
 
@@ -339,28 +325,28 @@ class MultiScaleMaskedLangReferringDecoder(MultiScaleMaskedReferringDecoder):
 class MultiScaleMaskedLangSimpleReferringDecoder(MultiScaleMaskedReferringDecoder):
     @configurable
     def __init__(
-            self,
-            in_channels,
-            mask_classification=True,
-            *,
-            num_classes: int,
-            hidden_dim: int,
-            num_queries: int,
-            nheads: int,
-            dim_feedforward: int,
-            dec_layers: int,
-            pre_norm: bool,
-            mask_dim: int,
-            enforce_input_project: bool,
-            rla_weight: float = 0.1,
-            rla_layers: List[int],
-            group_layers: List[int],
-            group_tokens: List[int],
-            group_nheads: List[int],
-            group_depths: List[int],
-            group_drop_path_rate: int,
-            deep_supervision: bool
-
+        self,
+        in_channels,
+        mask_classification=True,
+        *,
+        num_classes: int,
+        hidden_dim: int,
+        num_queries: int,
+        nheads: int,
+        dim_feedforward: int,
+        dec_layers: int,
+        pre_norm: bool,
+        mask_dim: int,
+        enforce_input_project: bool,
+        rla_weight: float = 0.1,
+        rla_layers: List[int],
+        group_layers: List[int],
+        group_tokens: List[int],
+        group_nheads: List[int],
+        group_depths: List[int],
+        group_drop_path_rate: int,
+        deep_supervision: bool,
+        lang_dim: int,
     ):
         super().__init__(
             in_channels=in_channels,
@@ -374,8 +360,11 @@ class MultiScaleMaskedLangSimpleReferringDecoder(MultiScaleMaskedReferringDecode
             pre_norm=pre_norm,
             mask_dim=mask_dim,
             enforce_input_project=enforce_input_project,
-            rla_weight=rla_weight
+            rla_weight=rla_weight,
         )
+
+        if lang_dim != 768:
+            self.lang_proj = nn.Linear(lang_dim, hidden_dim)
 
         # Deep supervision similar to MaskFormer
         self.deep_supervision = deep_supervision
@@ -386,8 +375,9 @@ class MultiScaleMaskedLangSimpleReferringDecoder(MultiScaleMaskedReferringDecode
         self.group_tokens = nn.ModuleList()
         self.group_pos = nn.ModuleList()
 
-        assert all([i < self.num_layers for i in self.group_layers]), \
-            f'Group layers: {self.group_layers} exceeds number of layers: {self.num_layers}'
+        assert all(
+            [i < self.num_layers for i in self.group_layers]
+        ), f"Group layers: {self.group_layers} exceeds number of layers: {self.num_layers}"
 
         # TODO: Use for transformer decoder
         dpr = [x.item() for x in torch.linspace(0, group_drop_path_rate, sum(group_depths))]
@@ -396,12 +386,7 @@ class MultiScaleMaskedLangSimpleReferringDecoder(MultiScaleMaskedReferringDecode
         for i_layer in range(self.num_layers):
             if i_layer in self.rla_layers:
                 self.RLA_lang_att.append(
-                    CrossAttentionLayer(
-                        d_model=hidden_dim,
-                        nhead=nheads,
-                        dropout=0.0,
-                        normalize_before=pre_norm
-                    )
+                    CrossAttentionLayer(d_model=hidden_dim, nhead=nheads, dropout=0.0, normalize_before=pre_norm)
                 )
             if i_layer in self.group_layers:
                 decoder_layer = nn.TransformerDecoderLayer(
@@ -411,7 +396,7 @@ class MultiScaleMaskedLangSimpleReferringDecoder(MultiScaleMaskedReferringDecode
                     activation="gelu",
                     norm_first=pre_norm,
                     dropout=0.0,
-                    batch_first=True
+                    batch_first=True,
                 )
                 decoder = nn.TransformerDecoder(
                     decoder_layer,
@@ -452,15 +437,11 @@ class MultiScaleMaskedLangSimpleReferringDecoder(MultiScaleMaskedReferringDecode
         ret["group_drop_path_rate"] = cfg.MODEL.MASK_FORMER.GROUP_DROP_PATH_RATE
         ret["deep_supervision"] = cfg.MODEL.MASK_FORMER.DEEP_SUPERVISION
 
+        ret["lang_dim"] = cfg.REFERRING.LANG_DIM
+
         return ret
 
-    def forward(
-            self,
-            x: List[torch.Tensor],
-            mask_features: torch.Tensor,
-            lang_feat: torch.Tensor,
-            mask=None
-    ):
+    def forward(self, x: List[torch.Tensor], mask_features: torch.Tensor, lang_feat: torch.Tensor, mask=None):
         """
 
         Args:
@@ -516,7 +497,8 @@ class MultiScaleMaskedLangSimpleReferringDecoder(MultiScaleMaskedReferringDecode
 
         # prediction heads on learnable query features
         outputs_minimap, outputs_mask, attn_mask, tgt_mask, nt_label = self.forward_prediction_heads(
-            prev_query_output, mask_features, attn_mask_target_size=size_list[0])
+            prev_query_output, mask_features, attn_mask_target_size=size_list[0]
+        )
         predictions_class.append(outputs_minimap)
         # predictions_mask.append(outputs_mask)
 
@@ -538,7 +520,7 @@ class MultiScaleMaskedLangSimpleReferringDecoder(MultiScaleMaskedReferringDecode
                 memory_mask=attn_mask,  # attn_mask
                 memory_key_padding_mask=None,
                 pos=pos[level_index],  # added to key/memory
-                query_pos=query_embed  # added to query/tgt
+                query_pos=query_embed,  # added to query/tgt
             )
 
             # Language Grouping before RLA
@@ -557,33 +539,26 @@ class MultiScaleMaskedLangSimpleReferringDecoder(MultiScaleMaskedReferringDecode
 
             # Region-Language Cross-Attention
             if i in self.rla_layers:
-                lang_vision_feat = (
-                        self.RLA_lang_att[rla_idx](
-                            prev_query_output,  # (Q, B, C)
-                            lang_feat_att.permute(1, 0, 2)  # (G_l, B, C)
-                        ) *
-                        F.sigmoid(self.lang_weight)  # (1,)
-                )  # (Q, B, C)
+                lang_vision_feat = self.RLA_lang_att[rla_idx](
+                    prev_query_output, lang_feat_att.permute(1, 0, 2)  # (Q, B, C)  # (G_l, B, C)
+                ) * F.sigmoid(
+                    self.lang_weight
+                )  # (1,)  # (Q, B, C)
                 prev_query_output = prev_query_output + lang_vision_feat * self.rla_weight  # (Q, B, C)
                 rla_idx += 1
 
             # RLA vision attention
             # self attention itself has a skip connection
             prev_query_output = self.RLA_vision[i](  # Self-Attention
-                prev_query_output,
-                tgt_mask=None,
-                tgt_key_padding_mask=None,
-                query_pos=query_embed
+                prev_query_output, tgt_mask=None, tgt_key_padding_mask=None, query_pos=query_embed
             )
 
             # Postprocessing
             prev_query_output = self.transformer_ffn_layers[i](prev_query_output)
 
-            outputs_minimap, outputs_mask, attn_mask, tgt_mask, nt_label = (
-                self.forward_prediction_heads(
-                    prev_query_output,
-                    mask_features,
-                    attn_mask_target_size=size_list[(i + 1) % self.num_feature_levels]))
+            outputs_minimap, outputs_mask, attn_mask, tgt_mask, nt_label = self.forward_prediction_heads(
+                prev_query_output, mask_features, attn_mask_target_size=size_list[(i + 1) % self.num_feature_levels]
+            )
 
             # Predictions of all passes are recorded, but only the last output is used in this code
             predictions_class.append(outputs_minimap)
@@ -594,22 +569,21 @@ class MultiScaleMaskedLangSimpleReferringDecoder(MultiScaleMaskedReferringDecode
                 aux_nt_label.append(nt_label)
 
         out = {
-            'pred_logits': predictions_class[-1],  # (B, Q, nC)
-            'pred_masks': tgt_mask,  # (B, nC, H/4, W/4)
-            'all_masks': outputs_mask,  # Not used anywhere
-            'nt_label': nt_label
+            "pred_logits": predictions_class[-1],  # (B, Q, nC)
+            "pred_masks": tgt_mask,  # (B, nC, H/4, W/4)
+            "all_masks": outputs_mask,  # Not used anywhere
+            "nt_label": nt_label,
         }
 
         if self.deep_supervision:
             aux_outputs = []
             for i in range(self.num_layers - 1):
                 layer_output = {
-                    'pred_logits': predictions_class[i + 1],  # skip first prediction
-                    'pred_masks': aux_tgt_mask[i],
-                    'nt_label': aux_nt_label[i],
-
+                    "pred_logits": predictions_class[i + 1],  # skip first prediction
+                    "pred_masks": aux_tgt_mask[i],
+                    "nt_label": aux_nt_label[i],
                 }
                 aux_outputs.append(layer_output)
-            out['aux_outputs'] = aux_outputs
+            out["aux_outputs"] = aux_outputs
 
         return out
