@@ -153,7 +153,8 @@ def add_group_config(cfg):
 
     # Criterion Weights
     cfg.MODEL.MASK_FORMER.MINIMAP_WEIGHT = 0.1
-    cfg.MODEL.MASK_FORMER.ATTN_LOSS_WEIGHT = 0.0
+    cfg.MODEL.MASK_FORMER.ATTN_STD_WEIGHT = 0.0
+    cfg.MODEL.MASK_FORMER.GROUP_SIZE_WEIGHT = 0.0
     cfg.MODEL.MASK_FORMER.DISTRACTOR_WEIGHT = 0.0
 
     # Padding values

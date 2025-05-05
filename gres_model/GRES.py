@@ -14,7 +14,7 @@ from .modeling.criterion import ReferringCriterion
 from .modeling.postprocessing import refer_postprocess
 from .structures import ImageList
 from .utils.misc import get_pad_values
-from .utils.tokens import get_tokenizer
+from .utils.tokens import get_text_encoder
 
 
 @META_ARCH_REGISTRY.register()
@@ -80,7 +80,7 @@ class GRES(nn.Module):
         sem_seg_head = build_sem_seg_head(cfg, backbone.output_shape())
 
         # Setup text encoder and freeze layers
-        text_encoder = get_tokenizer(cfg.REFERRING.BERT_TYPE)
+        text_encoder = get_text_encoder(cfg.REFERRING.BERT_TYPE)
         if not isinstance(text_encoder, str):
             text_encoder.pooler = None
 
@@ -101,7 +101,8 @@ class GRES(nn.Module):
             "loss_dice": cfg.MODEL.MASK_FORMER.DICE_WEIGHT,
             "loss_minimap": cfg.MODEL.MASK_FORMER.MINIMAP_WEIGHT,
             "loss_no_target": cfg.MODEL.MASK_FORMER.NO_OBJECT_WEIGHT,
-            "loss_attn": cfg.MODEL.MASK_FORMER.ATTN_LOSS_WEIGHT,
+            "loss_attn_std": cfg.MODEL.MASK_FORMER.ATTN_STD_WEIGHT,
+            "loss_group_size": cfg.MODEL.MASK_FORMER.GROUP_SIZE_WEIGHT,
             "loss_distractor": cfg.MODEL.MASK_FORMER.DISTRACTOR_WEIGHT,
         }
         weight_dict = {k: v for k, v in weight_dict.items() if v != 0}
@@ -119,7 +120,7 @@ class GRES(nn.Module):
                     {
                         f"{k}_{aux_idx}": v * aux_weight_multiplier[aux_idx]
                         for k, v in weight_dict.items()
-                        if k != "loss_attn"
+                        if k not in ("loss_attn_std", "loss_group_size")
                     }
                 )
             weight_dict.update(aux_weight_dict)
