@@ -58,6 +58,7 @@ class MultiScaleMaskedDualReferringDecoder(MultiScaleMaskedReferringDecoder):
             group_gumbel: bool,
             deep_supervision: bool,
             lang_pos: bool,
+            lang_dim: int,
             vis_to_lang_weight: float = 0.5
 
     ):
@@ -75,6 +76,9 @@ class MultiScaleMaskedDualReferringDecoder(MultiScaleMaskedReferringDecoder):
             enforce_input_project=enforce_input_project,
             rla_weight=rla_weight
         )
+
+        if lang_dim != 768:
+            self.lang_proj = nn.Linear(lang_dim, hidden_dim)
 
         # Deep supervision similar to MaskFormer
         self.deep_supervision = deep_supervision
@@ -175,6 +179,7 @@ class MultiScaleMaskedDualReferringDecoder(MultiScaleMaskedReferringDecoder):
         ret["group_gumbel"] = cfg.MODEL.MASK_FORMER.GROUP_GUMBEL
         ret["deep_supervision"] = cfg.MODEL.MASK_FORMER.DEEP_SUPERVISION
         ret["lang_pos"] = cfg.MODEL.MASK_FORMER.LANG_POS
+        ret["lang_dim"] = cfg.REFERRING.LANG_DIM
 
         return ret
 
