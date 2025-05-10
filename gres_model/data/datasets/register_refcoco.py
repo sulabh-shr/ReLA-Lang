@@ -39,6 +39,12 @@ def register_grefcoco(root):
     dataset_info = [
         ('grefcoco', 'unc', ['train', 'val', 'testA', 'testB', 'val_5', 'val_20']),
         ('grefcoco', 'gmu', ['train', 'val', 'testA', 'testB', 'val_5', 'val_20']),
+        ('grefcoco', 'debug', ['train', 'val', 'testA', 'testB', 'val_5', 'val_20']),
+        ('grefcoco', 'debug10', ['train', 'val', 'testA', 'testB', 'val_5', 'val_20']),
+        ('grefcoco', 'debug20', ['train', 'val', 'testA', 'testB', 'val_5', 'val_20']),
+        ('grefcoco', 'debug30', ['train', 'val', 'testA', 'testB', 'val_5', 'val_20']),
+        ('grefcoco', 'debug40', ['train', 'val', 'testA', 'testB', 'val_5', 'val_20']),
+        ('grefcoco', 'debug50', ['train', 'val', 'testA', 'testB', 'val_5', 'val_20']),
     ]
     for name, splitby, splits in dataset_info:
         for split in splits:
